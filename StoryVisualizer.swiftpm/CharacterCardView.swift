@@ -11,6 +11,8 @@ struct CharacterCardView: View {
             .overlay {
                 VStack(spacing: 12) {
                     TextField("Character Name", text: $character.name)
+                        .autocorrectionDisabled(true)
+                        .textInputAutocapitalization(.words)
                         .textFieldStyle(.plain)
                         .font(.headline)
                         .multilineTextAlignment(.center)

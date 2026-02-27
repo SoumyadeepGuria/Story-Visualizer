@@ -62,6 +62,16 @@ struct CharacterSetupView: View {
         }
         .background(Color(.systemGray6))
         .navigationTitle(project.name)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    StoryCanvasView(projectName: project.name)
+                } label: {
+                    Text("Canvas")
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(
             isPresented: Binding(

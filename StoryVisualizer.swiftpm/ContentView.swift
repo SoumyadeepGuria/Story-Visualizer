@@ -42,6 +42,8 @@ struct ContentView: View {
             }
             .alert("New Project", isPresented: $isShowingCreateProjectAlert) {
                 TextField("Project name", text: $newProjectName)
+                    .autocorrectionDisabled(true)
+                    .textInputAutocapitalization(.words)
 
                 Button("Cancel", role: .cancel) {
                     newProjectName = ""
