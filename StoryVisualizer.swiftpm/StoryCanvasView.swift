@@ -1600,13 +1600,13 @@ private enum EventCardLayout {
     static let titleFont: UIFont = .systemFont(ofSize: 24, weight: .regular)
     static let titleMeasureWidth: CGFloat = 330
     
-    static let sectionTitleFont: UIFont = .systemFont(ofSize: 18, weight: .bold)
+    static let sectionTitleFont: UIFont = .systemFont(ofSize: 24, weight: .regular)
     static let characterIconSize: CGFloat = 44
     
-    static let subEventDescBaseHeight: CGFloat = 50
-    static let subEventDescLineIncrement: CGFloat = 20
-    static let subEventDescFont: UIFont = .systemFont(ofSize: 18, weight: .regular)
-    static let subEventDescMeasureWidth: CGFloat = 340
+    static let subEventDescBaseHeight: CGFloat = 56
+    static let subEventDescLineIncrement: CGFloat = 22
+    static let subEventDescFont: UIFont = .systemFont(ofSize: 22, weight: .regular)
+    static let subEventDescMeasureWidth: CGFloat = 280
 }
 
 private func eventCardSize(_ data: EventCardData?) -> CGSize {
@@ -1617,20 +1617,21 @@ private func eventCardSize(_ data: EventCardData?) -> CGSize {
     let titleLines = AlphaLogic.lineCount(for: data.title, font: EventCardLayout.titleFont, measureWidth: EventCardLayout.titleMeasureWidth)
     let titleHeight = max(EventCardLayout.titleBaseHeight, AlphaLogic.steppedHeight(base: EventCardLayout.titleBaseHeight, increment: EventCardLayout.titleLineIncrement, lineCount: titleLines))
     
-    // Involved characters section height
-    // Padding(8*2) + Text(approx 24) + Spacing(8) + IconArea(44) = 92
-    let charactersSectionHeight: CGFloat = 92
+    // Involved characters section height: Text(approx 34) + Spacing(10) + Row(64) = 108
+    let charactersSectionHeight: CGFloat = 108
     
     // Sub-events section height
     let subEventsHeight = data.subEvents.reduce(CGFloat(0)) { total, sub in
         let descLines = AlphaLogic.lineCount(for: sub.description, font: EventCardLayout.subEventDescFont, measureWidth: EventCardLayout.subEventDescMeasureWidth)
         let descHeight = max(EventCardLayout.subEventDescBaseHeight, AlphaLogic.steppedHeight(base: EventCardLayout.subEventDescBaseHeight, increment: EventCardLayout.subEventDescLineIncrement, lineCount: descLines))
         
-        // Item internals: Padding(10*2) + Header(18) + Spacing(8) + desc + Spacing(8) + DropZone(46) = descHeight + 100
-        return total + descHeight + 100 + 12 // 12 is spacing between items
+        // Item is an HStack. Left circle is 56. Right VStack has desc + spacing(10) + dropZone(56)
+        let rightContentHeight = descHeight + 10 + 56
+        let itemHeight = max(56, rightContentHeight)
+        return total + itemHeight + 10 // 10 is spacing between items
     }
     
-    let plusButtonHeight: CGFloat = 44 + 10
+    let plusButtonHeight: CGFloat = 56 + 10
     
     let totalHeight = (EventCardLayout.outerPadding * 2) 
         + titleHeight 
@@ -1639,7 +1640,7 @@ private func eventCardSize(_ data: EventCardData?) -> CGSize {
         + 16 // spacing after characters
         + subEventsHeight 
         + plusButtonHeight
-        + 40 // safety buffer for varying text rendering
+        + 30 // buffer
         
     return CGSize(width: EventCardLayout.cardWidth, height: max(300, totalHeight))
 }
@@ -1672,45 +1673,43 @@ struct EventCanvasCard: View {
             measureWidth: EventCardLayout.titleMeasureWidth,
             textAlignment: .center
         )
-        .background(RoundedRectangle(cornerRadius: 20).fill(Color(.systemGray6)))
-        .overlay {
+        .background(RoundedRectangle(cornerRadius: 24).fill(Color(.systemGray6)))
+        .overlay(alignment: .center) {
             if data.title.isEmpty {
-                Text("Event Title").foregroundStyle(.secondary).allowsHitTesting(false)
+                Text("Name of the event")
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundStyle(Color.black.opacity(0.65))
+                    .allowsHitTesting(false)
             }
         }
     }
     
     private var involvedCharactersSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Characters")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(.black.opacity(0.7))
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Involved Characters")
+                .font(.system(size: 24, weight: .regular))
+                .foregroundStyle(Color.black.opacity(0.9))
             
-            HStack(spacing: 8) {
-                if data.involvedCharacterIDs.isEmpty {
-                    Text("No characters involved yet")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 8)
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(data.involvedCharacterIDs, id: \.self) { charID in
-                                if let char = project.characters.first(where: { $0.id == charID }) {
-                                    CharacterIconView(character: char, size: EventCardLayout.characterIconSize)
-                                }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    if !data.involvedCharacterIDs.isEmpty {
+                        ForEach(data.involvedCharacterIDs, id: \.self) { charID in
+                            if let char = project.characters.first(where: { $0.id == charID }) {
+                                CharacterIconView(character: char, size: 48)
                             }
                         }
                     }
                 }
+                .padding(.horizontal, 12)
+                .frame(height: 64)
+                .frame(minWidth: EventCardLayout.cardWidth - (EventCardLayout.outerPadding * 2), alignment: .leading)
+                .background(Color.clear)
             }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.systemGray5).opacity(0.5)))
     }
     
     private var subEventsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(data.subEvents.enumerated()), id: \.element.id) { index, subEvent in
                 subEventItem(at: index)
             }
@@ -1721,96 +1720,106 @@ struct EventCanvasCard: View {
     
     @ViewBuilder
     private func subEventItem(at index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Subevent \(index + 1)")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(index + 1)")
+                .font(.system(size: 24, weight: .regular))
+                .foregroundStyle(Color.black.opacity(0.85))
+                .frame(width: 56, height: 56)
+                .background(
+                    Circle()
+                        .fill(Color(.systemGray6))
+                        .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
+                )
             
-            AutoGrowingTextEditor(
-                text: Binding(
-                    get: { data.subEvents[index].description },
-                    set: { data.subEvents[index].description = $0 }
-                ),
-                minimumHeight: EventCardLayout.subEventDescBaseHeight,
-                baseHeight: EventCardLayout.subEventDescBaseHeight,
-                lineIncrement: EventCardLayout.subEventDescLineIncrement,
-                measureFont: EventCardLayout.subEventDescFont,
-                textFont: .system(size: 18),
-                measureWidth: EventCardLayout.subEventDescMeasureWidth,
-                textAlignment: .leading
-            )
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color(.systemGray6)))
-            
-            // Dedicated Character Drop Zone
-            VStack(alignment: .leading, spacing: 6) {
-                if data.subEvents[index].characterIDs.isEmpty {
-                    HStack {
-                        Image(systemName: "person.badge.plus")
-                        Text("Drop characters here")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
-                    )
-                } else {
-                    HStack(spacing: 6) {
-                        ForEach(data.subEvents[index].characterIDs, id: \.self) { charID in
-                            if let char = project.characters.first(where: { $0.id == charID }) {
-                                CharacterIconView(character: char, size: 34)
-                                    .onTapGesture {
-                                        data.subEvents[index].characterIDs.removeAll { $0 == charID }
-                                        updateInvolvedCharacters()
-                                    }
-                            }
-                        }
-                        
-                        // Functional minus button to remove the last character
-                        Button {
-                            if !data.subEvents[index].characterIDs.isEmpty {
-                                data.subEvents[index].characterIDs.removeLast()
-                                updateInvolvedCharacters()
-                            }
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
-                                .font(.system(size: 22))
-                                .foregroundStyle(.red.opacity(0.8))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.leading, 4)
-                    }
-                    .padding(6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.secondary.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
-                    )
-                }
-            }
-            .contentShape(Rectangle())
-            .dropDestination(for: UUID.self) { items, _ in
-                handleCharacterDrop(items: items, subEventIndex: index)
+            VStack(alignment: .leading, spacing: 10) {
+                AutoGrowingTextEditor(
+                    text: Binding(
+                        get: { data.subEvents[index].description },
+                        set: { data.subEvents[index].description = $0 }
+                    ),
+                    minimumHeight: EventCardLayout.subEventDescBaseHeight,
+                    baseHeight: EventCardLayout.subEventDescBaseHeight,
+                    lineIncrement: EventCardLayout.subEventDescLineIncrement,
+                    measureFont: EventCardLayout.subEventDescFont,
+                    textFont: .system(size: 22, weight: .regular),
+                    measureWidth: EventCardLayout.subEventDescMeasureWidth,
+                    textAlignment: .leading
+                )
+                .background(RoundedRectangle(cornerRadius: 24).fill(Color(.systemGray6)))
+                
+                dropZone(at: index)
             }
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.15)))
+    }
+    
+    private func dropZone(at index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if data.subEvents[index].characterIDs.isEmpty {
+                HStack {
+                    Image(systemName: "person.badge.plus")
+                        .font(.system(size: 20))
+                    Text("Drop characters here")
+                        .font(.system(size: 16))
+                }
+                .foregroundStyle(Color.black.opacity(0.5))
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(Color.black.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
+                )
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(data.subEvents[index].characterIDs, id: \.self) { charID in
+                        if let char = project.characters.first(where: { $0.id == charID }) {
+                            CharacterIconView(character: char, size: 40)
+                                .onTapGesture {
+                                    data.subEvents[index].characterIDs.removeAll { $0 == charID }
+                                    updateInvolvedCharacters()
+                                }
+                        }
+                    }
+                    
+                    Button {
+                        if !data.subEvents[index].characterIDs.isEmpty {
+                            data.subEvents[index].characterIDs.removeLast()
+                            updateInvolvedCharacters()
+                        }
+                    } label: {
+                        Image(systemName: "minus.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.red.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 56)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color(.systemGray6))
+                )
+            }
+        }
+        .contentShape(Rectangle())
+        .dropDestination(for: UUID.self) { items, _ in
+            handleCharacterDrop(items: items, subEventIndex: index)
+        }
     }
     
     private var addSubeventButton: some View {
         Button {
             data.subEvents.append(SubEvent(description: ""))
         } label: {
-            HStack {
-                Image(systemName: "plus.circle.fill")
-                Text("Add Subevent")
-            }
-            .font(.subheadline.bold())
-            .foregroundStyle(.blue)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.blue.opacity(0.1)))
+            Circle()
+                .fill(Color(.systemGray6))
+                .frame(width: 56, height: 56)
+                .overlay {
+                    Image(systemName: "plus")
+                        .font(.system(size: 34, weight: .regular))
+                        .foregroundStyle(Color.black.opacity(0.82))
+                }
+                .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
         }
         .buttonStyle(.plain)
     }
