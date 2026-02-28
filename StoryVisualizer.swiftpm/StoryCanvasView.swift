@@ -1618,26 +1618,28 @@ private func eventCardSize(_ data: EventCardData?) -> CGSize {
     let titleHeight = max(EventCardLayout.titleBaseHeight, AlphaLogic.steppedHeight(base: EventCardLayout.titleBaseHeight, increment: EventCardLayout.titleLineIncrement, lineCount: titleLines))
     
     // Involved characters section height
-    let charactersSectionHeight: CGFloat = 30 + (data.involvedCharacterIDs.isEmpty ? 0 : EventCardLayout.characterIconSize + 10)
+    // Padding(8*2) + Text(approx 24) + Spacing(8) + IconArea(44) = 92
+    let charactersSectionHeight: CGFloat = 92
     
     // Sub-events section height
     let subEventsHeight = data.subEvents.reduce(CGFloat(0)) { total, sub in
         let descLines = AlphaLogic.lineCount(for: sub.description, font: EventCardLayout.subEventDescFont, measureWidth: EventCardLayout.subEventDescMeasureWidth)
         let descHeight = max(EventCardLayout.subEventDescBaseHeight, AlphaLogic.steppedHeight(base: EventCardLayout.subEventDescBaseHeight, increment: EventCardLayout.subEventDescLineIncrement, lineCount: descLines))
         
-        let charIconsHeight: CGFloat = sub.characterIDs.isEmpty ? 0 : EventCardLayout.characterIconSize + 8
-        return total + 30 + descHeight + charIconsHeight + 10 // index text + desc + icons + spacing
+        // Item internals: Padding(10*2) + Header(18) + Spacing(8) + desc + Spacing(8) + DropZone(46) = descHeight + 100
+        return total + descHeight + 100 + 12 // 12 is spacing between items
     }
     
     let plusButtonHeight: CGFloat = 44 + 10
     
     let totalHeight = (EventCardLayout.outerPadding * 2) 
         + titleHeight 
-        + 16 // spacing
+        + 16 // spacing after title
         + charactersSectionHeight 
-        + 16 // spacing
+        + 16 // spacing after characters
         + subEventsHeight 
         + plusButtonHeight
+        + 40 // safety buffer for varying text rendering
         
     return CGSize(width: EventCardLayout.cardWidth, height: max(300, totalHeight))
 }
@@ -1719,7 +1721,7 @@ struct EventCanvasCard: View {
     
     @ViewBuilder
     private func subEventItem(at index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Subevent \(index + 1)")
                 .font(.caption.bold())
                 .foregroundStyle(.secondary)
@@ -1739,26 +1741,61 @@ struct EventCanvasCard: View {
             )
             .background(RoundedRectangle(cornerRadius: 12).fill(Color(.systemGray6)))
             
-            if !data.subEvents[index].characterIDs.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(data.subEvents[index].characterIDs, id: \.self) { charID in
-                        if let char = project.characters.first(where: { $0.id == charID }) {
-                            CharacterIconView(character: char, size: 34)
-                                .onTapGesture {
-                                    data.subEvents[index].characterIDs.removeAll { $0 == charID }
-                                    updateInvolvedCharacters()
-                                }
-                        }
+            // Dedicated Character Drop Zone
+            VStack(alignment: .leading, spacing: 6) {
+                if data.subEvents[index].characterIDs.isEmpty {
+                    HStack {
+                        Image(systemName: "person.badge.plus")
+                        Text("Drop characters here")
                     }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
+                    )
+                } else {
+                    HStack(spacing: 6) {
+                        ForEach(data.subEvents[index].characterIDs, id: \.self) { charID in
+                            if let char = project.characters.first(where: { $0.id == charID }) {
+                                CharacterIconView(character: char, size: 34)
+                                    .onTapGesture {
+                                        data.subEvents[index].characterIDs.removeAll { $0 == charID }
+                                        updateInvolvedCharacters()
+                                    }
+                            }
+                        }
+                        
+                        // Functional minus button to remove the last character
+                        Button {
+                            if !data.subEvents[index].characterIDs.isEmpty {
+                                data.subEvents[index].characterIDs.removeLast()
+                                updateInvolvedCharacters()
+                            }
+                        } label: {
+                            Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 22))
+                                .foregroundStyle(.red.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.leading, 4)
+                    }
+                    .padding(6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.secondary.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
+                    )
                 }
-                .padding(.top, 2)
+            }
+            .contentShape(Rectangle())
+            .dropDestination(for: UUID.self) { items, _ in
+                handleCharacterDrop(items: items, subEventIndex: index)
             }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1)))
-        .dropDestination(for: UUID.self) { items, _ in
-            handleCharacterDrop(items: items, subEventIndex: index)
-        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.15)))
     }
     
     private var addSubeventButton: some View {

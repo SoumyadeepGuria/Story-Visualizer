@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension UTType {
-    nonisolated(unsafe) static let storyCharacter = UTType(exportedAs: "com.storyvisualizer.character")
+    static let storyCharacter = UTType.data
 }
 
 extension UUID: Transferable {
