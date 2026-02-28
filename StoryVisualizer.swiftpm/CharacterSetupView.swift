@@ -65,7 +65,7 @@ struct CharacterSetupView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
-                    StoryCanvasView(projectName: project.name)
+                    StoryCanvasView(project: $project)
                 } label: {
                     Text("Canvas")
                         .font(.subheadline.weight(.semibold))

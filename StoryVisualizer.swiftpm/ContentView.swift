@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 struct ContentView: View {
     @State private var projects: [Project] = []
@@ -12,6 +13,12 @@ struct ContentView: View {
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: isPad ? 250 : 170), spacing: 12, alignment: .top)]
+    }
+
+    private var projectsFileURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        return (docs ?? URL(fileURLWithPath: NSTemporaryDirectory()))
+            .appendingPathComponent("storyvisualizer-projects.json")
     }
 
     var body: some View {
@@ -60,6 +67,23 @@ struct ContentView: View {
             } message: {
                 Text("Enter the project name.")
             }
+            .onAppear {
+                loadProjects()
+            }
+            .onChange(of: projects) { _ in
+                saveProjects()
+            }
         }
+    }
+
+    private func loadProjects() {
+        guard let data = try? Data(contentsOf: projectsFileURL) else { return }
+        guard let decoded = try? JSONDecoder().decode([Project].self, from: data) else { return }
+        projects = decoded
+    }
+
+    private func saveProjects() {
+        guard let data = try? JSONEncoder().encode(projects) else { return }
+        try? data.write(to: projectsFileURL, options: [.atomic])
     }
 }
