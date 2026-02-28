@@ -59,6 +59,7 @@ struct StoryCanvasView: View {
                         .position(worldToViewport(node.position))
                         .onLongPressGesture(minimumDuration: 0.35) {
                             withAnimation(.easeInOut(duration: 0.15)) {
+                                guard !isAnyMiniCanvasInEditMode() else { return }
                                 clearMiniEditModes()
                                 selectedMainNodeID = node.id
                             }
@@ -151,6 +152,7 @@ struct StoryCanvasView: View {
                     DragGesture(minimumDistance: 1)
                         .onChanged { value in
                             guard selectedMainNodeID == nil else { return }
+                            guard !isAnyMiniCanvasInEditMode() else { return }
                             if panStartOffset == nil {
                                 panStartOffset = cameraOffset
                             }
@@ -531,12 +533,7 @@ private struct CanvasNodeView: View {
         switch node.type {
         case .location:
             LocationCanvasCard(
-                data: Binding(
-                    get: { node.locationData ?? .defaultData },
-                    set: { node.locationData = $0 }
-                ),
-                locationNodeID: node.id,
-                locationWorldPosition: node.position,
+                node: $node,
                 onMoveMiniNodeToMain: onMoveMiniNodeToMain
             )
         case .choices:
@@ -593,15 +590,20 @@ private enum LocationCardLayout {
 }
 
 private struct LocationCanvasCard: View {
-    @Binding var data: LocationCardData
-    let locationNodeID: UUID
-    let locationWorldPosition: CGPoint
+    @Binding var node: CanvasNode
     let onMoveMiniNodeToMain: (UUID, CanvasNode, CGPoint) -> Void
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var movingMiniNodeID: UUID?
     @State private var movingMiniStartPosition: CGPoint = .zero
     @State private var pendingMiniDeletionNodeID: UUID?
     @State private var isShowingMiniDeleteDialog = false
+
+    private var data: Binding<LocationCardData> {
+        Binding(
+            get: { node.locationData ?? .defaultData },
+            set: { node.locationData = $0 }
+        )
+    }
 
     var body: some View {
         baseCardView
@@ -615,9 +617,9 @@ private struct LocationCanvasCard: View {
             ) {
                 Button("Delete", role: .destructive) {
                     guard let targetID = pendingMiniDeletionNodeID else { return }
-                    data.miniNodes.removeAll { $0.id == targetID }
-                    if data.selectedMiniNodeID == targetID {
-                        data.selectedMiniNodeID = nil
+                    node.locationData?.miniNodes.removeAll { $0.id == targetID }
+                    if node.locationData?.selectedMiniNodeID == targetID {
+                        node.locationData?.selectedMiniNodeID = nil
                     }
                     pendingMiniDeletionNodeID = nil
                 }
@@ -632,7 +634,7 @@ private struct LocationCanvasCard: View {
                 Task {
                     if let imageData = try? await newItem.loadTransferable(type: Data.self) {
                         await MainActor.run {
-                            data.backgroundImageData = imageData
+                            node.locationData?.backgroundImageData = imageData
                         }
                     }
                 }
@@ -643,7 +645,7 @@ private struct LocationCanvasCard: View {
         RoundedRectangle(cornerRadius: 16)
             .fill(Color(.systemGray4))
             .overlay {
-                if let imageData = data.backgroundImageData,
+                if let imageData = node.locationData?.backgroundImageData,
                    let image = UIImage(data: imageData) {
                     Image(uiImage: image)
                         .resizable()
@@ -683,7 +685,7 @@ private struct LocationCanvasCard: View {
             }
             .buttonStyle(.plain)
 
-            TextField("Name of location", text: $data.title)
+            TextField("Name of location", text: data.title)
                 .font(.system(size: 24, weight: .regular))
                 .padding(.horizontal, 16)
                 .frame(maxWidth: .infinity)
@@ -714,10 +716,10 @@ private struct LocationCanvasCard: View {
             .dropDestination(for: String.self) { items, location in
                 handleDropOnMiniCanvas(items: items, location: location, proxySize: proxy.size)
             } isTargeted: { targeted in
-                data.isMiniCanvasTargeted = targeted
+                node.locationData?.isMiniCanvasTargeted = targeted
                 if targeted {
-                    data.pinnedMiniCanvasWidth = max(data.pinnedMiniCanvasWidth, proxy.size.width)
-                    data.pinnedMiniCanvasHeight = max(data.pinnedMiniCanvasHeight, proxy.size.height)
+                    node.locationData?.pinnedMiniCanvasWidth = max(node.locationData?.pinnedMiniCanvasWidth ?? 0, proxy.size.width)
+                    node.locationData?.pinnedMiniCanvasHeight = max(node.locationData?.pinnedMiniCanvasHeight ?? 0, proxy.size.height)
                 }
             }
         }
@@ -734,7 +736,7 @@ private struct LocationCanvasCard: View {
     }
     
     private func miniNodesContent(proxy: GeometryProxy) -> some View {
-        ForEach($data.miniNodes) { $miniNode in
+        ForEach(data.miniNodes) { $miniNode in
             miniNodeItemView(miniNode: $miniNode, proxySize: proxy.size)
         }
     }
@@ -747,25 +749,28 @@ private struct LocationCanvasCard: View {
              )
              .zIndex(movingMiniNodeID == miniNode.id ? 10 : 0)
              .overlay(alignment: .topTrailing) {
-                if data.isMiniEditing && data.selectedMiniNodeID == miniNode.id {
+                if data.wrappedValue.isMiniEditing && data.wrappedValue.selectedMiniNodeID == miniNode.id {
                     miniDeleteButton(nodeID: miniNode.id)
                 }
             }
             .position(miniNode.wrappedValue.position)
-            .onLongPressGesture(minimumDuration: 0.35) {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    data.isMiniEditing = true
-                    data.selectedMiniNodeID = miniNode.id
-                }
-            }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        handleMiniNodeDragChanged(value: value, miniNode: miniNode)
-                    }
+            .highPriorityGesture(
+                LongPressGesture(minimumDuration: 0.35)
                     .onEnded { _ in
-                        handleMiniNodeDragEnded(miniNode: miniNode, proxySize: proxySize)
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            node.locationData?.isMiniEditing = true
+                            node.locationData?.selectedMiniNodeID = miniNode.id
+                        }
                     }
+                    .simultaneously(with:
+                        DragGesture(minimumDistance: 1)
+                            .onChanged { value in
+                                handleMiniNodeDragChanged(value: value, miniNode: miniNode)
+                            }
+                            .onEnded { _ in
+                                handleMiniNodeDragEnded(miniNode: miniNode, proxySize: proxySize)
+                            }
+                    )
             )
     }
     
@@ -789,21 +794,23 @@ private struct LocationCanvasCard: View {
      
       private func handleMiniNodeDragChanged(value: DragGesture.Value, miniNode: Binding<CanvasNode>) {
           // Automatically select this node if dragging and not yet selected
-          if data.selectedMiniNodeID != miniNode.id {
-              data.isMiniEditing = true
-              data.selectedMiniNodeID = miniNode.id
+          if node.locationData?.selectedMiniNodeID != miniNode.id {
+              node.locationData?.isMiniEditing = true
+              node.locationData?.selectedMiniNodeID = miniNode.id
           }
           
-          guard data.isMiniEditing && data.selectedMiniNodeID == miniNode.id else { return }
+          guard node.locationData?.isMiniEditing == true && node.locationData?.selectedMiniNodeID == miniNode.id else { return }
           
           if movingMiniNodeID != miniNode.id {
               movingMiniNodeID = miniNode.id
               movingMiniStartPosition = miniNode.wrappedValue.position
           }
-          miniNode.wrappedValue.position = CGPoint(
+          
+          let newPosition = CGPoint(
               x: movingMiniStartPosition.x + value.translation.width,
               y: movingMiniStartPosition.y + value.translation.height
           )
+          miniNode.wrappedValue.position = newPosition
           
           // Expand canvas when card is dragged near edges
           let nodeSize = canvasNodeSize(miniNode.wrappedValue)
@@ -815,19 +822,52 @@ private struct LocationCanvasCard: View {
           let edgeThreshold: CGFloat = 40
           
           // Expand right
-          if nodeRight > data.pinnedMiniCanvasWidth - edgeThreshold {
-              data.pinnedMiniCanvasWidth = nodeRight + edgeThreshold
+          if nodeRight > (node.locationData?.pinnedMiniCanvasWidth ?? 0) - edgeThreshold {
+              node.locationData?.pinnedMiniCanvasWidth = nodeRight + edgeThreshold
           }
-          
-          // Expand left (this doesn't change width but the canvas starts from 0)
-          // No expansion needed for left as position is relative to canvas origin
           
           // Expand down
-          if nodeBottom > data.pinnedMiniCanvasHeight - edgeThreshold {
-              data.pinnedMiniCanvasHeight = nodeBottom + edgeThreshold
+          if nodeBottom > (node.locationData?.pinnedMiniCanvasHeight ?? 0) - edgeThreshold {
+              node.locationData?.pinnedMiniCanvasHeight = nodeBottom + edgeThreshold
           }
-          
-          // Expand up (similar to left, no expansion needed)
+
+          // Expand left
+          if nodeLeft < edgeThreshold {
+              let diff = edgeThreshold - nodeLeft
+              node.locationData?.pinnedMiniCanvasWidth += diff
+              
+              // Shift all mini nodes right (except the current one)
+              for i in 0..<(node.locationData?.miniNodes.count ?? 0) {
+                  if node.locationData?.miniNodes[i].id != miniNode.id {
+                      node.locationData?.miniNodes[i].position.x += diff
+                  }
+              }
+              // Shift the one we are currently dragging too (ongoing drag)
+              movingMiniStartPosition.x += diff
+              miniNode.wrappedValue.position.x += diff
+              
+              // Shift main card world position left
+              node.position.x -= diff / 2
+          }
+
+          // Expand top
+          if nodeTop < edgeThreshold {
+              let diff = edgeThreshold - nodeTop
+              node.locationData?.pinnedMiniCanvasHeight += diff
+              
+              // Shift all mini nodes down (except the current one)
+              for i in 0..<(node.locationData?.miniNodes.count ?? 0) {
+                  if node.locationData?.miniNodes[i].id != miniNode.id {
+                      node.locationData?.miniNodes[i].position.y += diff
+                  }
+              }
+              // Shift the one we are currently dragging too
+              movingMiniStartPosition.y += diff
+              miniNode.wrappedValue.position.y += diff
+              
+              // Shift main card world position up
+              node.position.y -= diff / 2
+          }
           
           adjustPinnedCanvasForNode(
               at: miniNode.wrappedValue.position,
@@ -836,32 +876,26 @@ private struct LocationCanvasCard: View {
       }
     
      private func handleMiniNodeDragEnded(miniNode: Binding<CanvasNode>, proxySize: CGSize) {
-         guard data.isMiniEditing, data.selectedMiniNodeID == miniNode.id else { return }
+         guard node.locationData?.isMiniEditing == true, node.locationData?.selectedMiniNodeID == miniNode.id else { return }
          
          let nodeSize = canvasNodeSize(miniNode.wrappedValue)
-         let nodeRect = CGRect(
-             x: miniNode.wrappedValue.position.x - nodeSize.width / 2,
-             y: miniNode.wrappedValue.position.y - nodeSize.height / 2,
-             width: nodeSize.width,
-             height: nodeSize.height
-         )
          let miniBounds = CGRect(origin: .zero, size: proxySize)
          
          // Check if node center is significantly outside bounds
          if !miniBounds.insetBy(dx: -20, dy: -20).contains(miniNode.wrappedValue.position) {
              // Clear edit mode before moving node
-             data.isMiniEditing = false
-             data.selectedMiniNodeID = nil
+             node.locationData?.isMiniEditing = false
+             node.locationData?.selectedMiniNodeID = nil
              
-             let worldPosition = worldPositionForMiniNode(
+             let worldPos = worldPositionForMiniNode(
                  miniPosition: miniNode.wrappedValue.position,
                  currentMiniCanvasSize: proxySize
              )
-             onMoveMiniNodeToMain(locationNodeID, miniNode.wrappedValue, worldPosition)
+             onMoveMiniNodeToMain(node.id, miniNode.wrappedValue, worldPos)
              movingMiniNodeID = nil
              return
          }
-         let others = data.miniNodes.filter { $0.id != miniNode.id }
+         let others = node.locationData?.miniNodes.filter { $0.id != miniNode.id } ?? []
          miniNode.wrappedValue.position = nearestFreeMiniPosition(
              desired: miniNode.wrappedValue.position,
              itemSize: canvasNodeSize(miniNode.wrappedValue),
@@ -875,53 +909,53 @@ private struct LocationCanvasCard: View {
      }
     
     private func handleDropOnMiniCanvas(items: [String], location: CGPoint, proxySize: CGSize) -> Bool {
-        defer { data.isMiniCanvasTargeted = false }
+        defer { node.locationData?.isMiniCanvasTargeted = false }
         guard let raw = items.first, let type = CanvasNodeType(rawValue: raw) else {
             return false
         }
 
-        var node = defaultNode(for: type)
-        let itemSize = canvasNodeSize(node)
+        var newNode = defaultNode(for: type)
+        let itemSize = canvasNodeSize(newNode)
         let placement = placeNodeWithoutOverlapInMini(
             desired: location,
             itemSize: itemSize,
-            existing: data.miniNodes,
+            existing: node.locationData?.miniNodes ?? [],
             currentCanvasSize: proxySize
         )
-        data.pinnedMiniCanvasWidth = max(data.pinnedMiniCanvasWidth, placement.requiredSize.width)
-        data.pinnedMiniCanvasHeight = max(data.pinnedMiniCanvasHeight, placement.requiredSize.height)
-        node.position = placement.position
-        data.miniNodes.append(node)
+        node.locationData?.pinnedMiniCanvasWidth = max(node.locationData?.pinnedMiniCanvasWidth ?? 0, placement.requiredSize.width)
+        node.locationData?.pinnedMiniCanvasHeight = max(node.locationData?.pinnedMiniCanvasHeight ?? 0, placement.requiredSize.height)
+        newNode.position = placement.position
+        node.locationData?.miniNodes.append(newNode)
         ensurePinnedCanvasCoversAllNodes()
         return true
     }
 
     private var miniNodeLayoutFingerprint: String {
         var parts: [String] = []
-        for node in data.miniNodes {
-            let size = canvasNodeSize(node)
-            let part = "\(node.id.uuidString):\(node.position.x):\(node.position.y):\(size.width):\(size.height)"
+        for miniNode in node.locationData?.miniNodes ?? [] {
+            let size = canvasNodeSize(miniNode)
+            let part = "\(miniNode.id.uuidString):\(miniNode.position.x):\(miniNode.position.y):\(size.width):\(size.height)"
             parts.append(part)
         }
         return parts.joined(separator: "|")
     }
 
     private func ensurePinnedCanvasCoversAllNodes() {
-        for node in data.miniNodes {
-            adjustPinnedCanvasForNode(at: node.position, size: canvasNodeSize(node))
+        for miniNode in node.locationData?.miniNodes ?? [] {
+            adjustPinnedCanvasForNode(at: miniNode.position, size: canvasNodeSize(miniNode))
         }
     }
 
     private func adjustPinnedCanvasForNode(at position: CGPoint, size: CGSize) {
         let requiredWidth = position.x + size.width / 2 + LocationCardLayout.miniCanvasHorizontalPadding
         let requiredHeight = position.y + size.height / 2 + LocationCardLayout.miniCanvasVerticalPadding
-        data.pinnedMiniCanvasWidth = max(
-            data.pinnedMiniCanvasWidth,
+        node.locationData?.pinnedMiniCanvasWidth = max(
+            node.locationData?.pinnedMiniCanvasWidth ?? 0,
             requiredWidth,
             LocationCardLayout.miniCanvasMinWidth
         )
-        data.pinnedMiniCanvasHeight = max(
-            data.pinnedMiniCanvasHeight,
+        node.locationData?.pinnedMiniCanvasHeight = max(
+            node.locationData?.pinnedMiniCanvasHeight ?? 0,
             requiredHeight,
             LocationCardLayout.miniCanvasMinHeight
         )
@@ -964,16 +998,16 @@ private struct LocationCanvasCard: View {
         placeNodeWithoutOverlapInMini(
             desired: desired,
             itemSize: itemSize,
-            existing: data.miniNodes,
+            existing: node.locationData?.miniNodes ?? [],
             currentCanvasSize: currentCanvasSize
         )
     }
 
     private func worldPositionForMiniNode(miniPosition: CGPoint, currentMiniCanvasSize: CGSize) -> CGPoint {
-        let cardSize = locationCardSize(data)
+        let cardSize = locationCardSize(node.locationData)
         let cardTopLeft = CGPoint(
-            x: locationWorldPosition.x - cardSize.width / 2,
-            y: locationWorldPosition.y - cardSize.height / 2
+            x: node.position.x - cardSize.width / 2,
+            y: node.position.y - cardSize.height / 2
         )
         let miniOrigin = CGPoint(
             x: cardTopLeft.x + LocationCardLayout.outerHorizontalPadding,
