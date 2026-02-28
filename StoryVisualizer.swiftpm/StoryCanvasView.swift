@@ -4,6 +4,7 @@ import PhotosUI
 
 struct StoryCanvasView: View {
     @Binding var project: Project
+    @Environment(\.dismiss) private var dismiss
     @State private var isTargeted = false
     @State private var viewportSize: CGSize = .zero
     @State private var cameraOffset: CGSize = .zero
@@ -16,9 +17,59 @@ struct StoryCanvasView: View {
     @State private var resizingLocationNodeID: UUID?
     @State private var resizeStartMiniSize: CGSize = .zero
     @State private var pendingMainDeletion: PendingMainDeletion?
+    @State private var isShowingActDeletionAlert = false
+    @State private var isCharacterMenuExpanded = false
+    @State private var isShowingCharacterCreator = false
+    @State private var newCharacter = StoryCharacter(name: "", avatar: .man)
+
+    private var currentActID: UUID? {
+        project.currentActID
+    }
+
+    private func deleteCurrentAct() {
+        guard let actID = project.currentActID,
+              let index = project.acts.firstIndex(where: { $0.id == actID }) else { return }
+        
+        project.acts.remove(at: index)
+        
+        if project.acts.isEmpty {
+            dismiss()
+        } else {
+            // Redirect to previous act if available, else first act
+            let nextIndex = max(0, index - 1)
+            project.currentActID = project.acts[nextIndex].id
+        }
+    }
+
+    private func ensureAtLeastOneAct() {
+        if project.acts.isEmpty {
+            let firstAct = Act(name: "Act 1")
+            project.acts.append(firstAct)
+            project.currentActID = firstAct.id
+        }
+    }
+
+    private var currentActIndex: Int {
+        project.acts.firstIndex(where: { $0.id == project.currentActID }) ?? 0
+    }
+
+    private var currentActNodes: Binding<[CanvasNode]> {
+        if let index = project.acts.firstIndex(where: { $0.id == project.currentActID }) {
+            return $project.acts[index].canvasNodes
+        } else if !project.acts.isEmpty {
+            return $project.acts[0].canvasNodes
+        } else {
+            // Fallback that shouldn't happen with proper init
+            return .constant([])
+        }
+    }
     
     private var isAnyEditModeActive: Bool {
-        selectedMainNodeID != nil || project.canvasNodes.contains { node in
+        guard !project.acts.isEmpty else { return false }
+        let idx = currentActIndex
+        guard idx < project.acts.count else { return false }
+        
+        return selectedMainNodeID != nil || project.acts[idx].canvasNodes.contains { node in
             node.locationData?.isMiniEditing == true
         }
     }
@@ -38,83 +89,54 @@ struct StoryCanvasView: View {
                             }
                         }
 
-                    ForEach($project.canvasNodes) { $node in
-                        CanvasNodeContainer(
-                            node: $node,
-                            isSelected: selectedMainNodeID == node.id,
-                            zoomScale: zoomScale,
-                            worldToViewport: worldToViewport,
-                            onMoveMiniNodeToMain: moveMiniNodeToMain,
-                            onDelete: {
-                                pendingMainDeletion = PendingMainDeletion(nodeID: node.id)
-                            }
-                        )
-                        .overlay(alignment: .bottomTrailing) {
-                            if selectedMainNodeID == node.id, node.type == .location {
-                                locationResizeHandle(for: $node)
-                                    .offset(x: -8, y: -8)
-                            }
-                        }
-                        .scaleEffect(zoomScale, anchor: .center)
-                        .position(worldToViewport(node.position))
-                        .onLongPressGesture(minimumDuration: 0.35) {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                guard !isAnyMiniCanvasInEditMode() else { return }
-                                clearMiniEditModes()
-                                selectedMainNodeID = node.id
-                            }
-                        }
-                         .simultaneousGesture(
-                             DragGesture(minimumDistance: 1)
-                                 .onChanged { value in
-                                     guard selectedMainNodeID == node.id else { return }
-                                     guard resizingLocationNodeID != node.id else { return }
-                                     guard !isAnyMiniCanvasInEditMode() else { return }
-                                     if movingMainNodeID != node.id {
-                                         movingMainNodeID = node.id
-                                         movingMainStartPosition = node.position
-                                     }
-                                     let newPos = CGPoint(
-                                         x: movingMainStartPosition.x + (value.translation.width / zoomScale),
-                                         y: movingMainStartPosition.y + (value.translation.height / zoomScale)
-                                     )
-                                     node.position = newPos
-                                     
-                                     for i in project.canvasNodes.indices {
-                                         if project.canvasNodes[i].type == .location && project.canvasNodes[i].id != node.id {
-                                             if let frame = miniCanvasWorldFrame(for: project.canvasNodes[i]) {
-                                                 project.canvasNodes[i].locationData?.isMiniCanvasTargeted = frame.contains(newPos)
-                                             }
-                                         }
-                                     }
-                                 }
-                                 .onEnded { _ in
-                                     guard selectedMainNodeID == node.id else { return }
-                                     guard resizingLocationNodeID != node.id else { return }
-                                     
-                                     for i in project.canvasNodes.indices {
-                                         project.canvasNodes[i].locationData?.isMiniCanvasTargeted = false
-                                     }
-
-                                     if moveMainNodeIntoMiniCanvasIfNeeded(nodeID: node.id) {
-                                         movingMainNodeID = nil
-                                         return
-                                     }
-                                     let others = project.canvasNodes.filter { $0.id != node.id }
-                                     node.position = nearestFreeWorldPosition(
-                                         desired: node.position,
-                                         itemSize: canvasNodeSize(node),
-                                         existing: others
-                                    )
-                                    movingMainNodeID = nil
-                                }
-                        )
-                    }
+                    MainCanvasNodeLoop(
+                        project: $project,
+                        selectedMainNodeID: $selectedMainNodeID,
+                        movingMainNodeID: $movingMainNodeID,
+                        movingMainStartPosition: $movingMainStartPosition,
+                        resizingLocationNodeID: $resizingLocationNodeID,
+                        zoomScale: zoomScale,
+                        worldToViewport: worldToViewport,
+                        isAnyMiniCanvasInEditMode: isAnyMiniCanvasInEditMode,
+                        clearMiniEditModes: clearMiniEditModes,
+                        moveMiniNodeToMain: moveMiniNodeToMain,
+                        onDeleteNode: { nodeID in
+                            pendingMainDeletion = PendingMainDeletion(nodeID: nodeID)
+                        },
+                        miniCanvasWorldFrame: miniCanvasWorldFrame,
+                        moveMainNodeIntoMiniCanvasIfNeeded: moveMainNodeIntoMiniCanvasIfNeeded,
+                        nearestFreeWorldPosition: nearestFreeWorldPosition,
+                        locationResizeHandle: locationResizeHandle
+                    )
 
                     VStack {
                         Spacer()
-                        HStack {
+                        HStack(spacing: 12) {
                             Spacer()
+                            
+                            Button {
+                                isShowingActDeletionAlert = true
+                            } label: {
+                                Circle()
+                                    .fill(Color.white.opacity(0.95))
+                                    .frame(width: 52, height: 52)
+                                    .overlay {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 22, weight: .semibold))
+                                            .foregroundStyle(Color.red.opacity(0.8))
+                                    }
+                                    .shadow(color: .black.opacity(0.18), radius: 3, x: 0, y: 2)
+                            }
+                            .buttonStyle(.plain)
+                            .alert("Delete Act", isPresented: $isShowingActDeletionAlert) {
+                                Button("Delete", role: .destructive) {
+                                    deleteCurrentAct()
+                                }
+                                Button("Cancel", role: .cancel) {}
+                            } message: {
+                                Text("Are you sure you want to delete the current canvas? This action cannot be undone.")
+                            }
+
                             Button {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     cameraOffset = .zero
@@ -134,14 +156,17 @@ struct StoryCanvasView: View {
                                     .shadow(color: .black.opacity(0.18), radius: 3, x: 0, y: 2)
                             }
                             .buttonStyle(.plain)
-                            .padding(.trailing, 16)
-                            .padding(.bottom, 16)
                         }
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 16)
                     }
+
+                    characterSideBar
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .contentShape(Rectangle())
                 .onAppear {
+                    ensureAtLeastOneAct()
                     viewportSize = viewport.size
                     zoomScale = CanvasCamera.initialZoomScale
                 }
@@ -210,7 +235,8 @@ struct StoryCanvasView: View {
                 title: Text("Delete Box"),
                 message: Text("This will delete the item and all its contents."),
                 primaryButton: .destructive(Text("Delete")) {
-                    project.canvasNodes.removeAll { $0.id == pending.nodeID }
+                    let actIdx = currentActIndex
+                    project.acts[actIdx].canvasNodes.removeAll { $0.id == pending.nodeID }
                     if selectedMainNodeID == pending.nodeID {
                         selectedMainNodeID = nil
                     }
@@ -221,22 +247,153 @@ struct StoryCanvasView: View {
     }
 
     private var topRibbon: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(CanvasNodeType.toolbarOrder) { type in
-                    ToolbarDraggableBox(type: type)
-                        .draggable(type.rawValue)
+        HStack(spacing: 12) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(CanvasNodeType.toolbarOrder) { type in
+                        ToolbarDraggableBox(type: type)
+                            .draggable(type.rawValue)
+                    }
                 }
+                .padding(10)
             }
-            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemGray4).opacity(0.45))
+            )
+            
+            actSelectorDropdown
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray4).opacity(0.45))
-        )
         .allowsHitTesting(!isAnyEditModeActive)
         .disabled(isAnyEditModeActive)
         .opacity(isAnyEditModeActive ? 0.55 : 1)
+    }
+
+    private var characterSideBar: some View {
+        VStack(spacing: 12) {
+            if let firstChar = project.characters.first {
+                CharacterSidebarItem(character: firstChar)
+                    .draggable(firstChar.id) {
+                        CharacterSidebarItem(character: firstChar)
+                    }
+            }
+
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                    isCharacterMenuExpanded.toggle()
+                }
+            } label: {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.95))
+                    .frame(width: 56, height: 56)
+                    .overlay {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 18, weight: .bold))
+                            .rotationEffect(.degrees(isCharacterMenuExpanded ? 180 : 0))
+                    }
+                    .shadow(color: .black.opacity(0.12), radius: 3, x: 0, y: 2)
+            }
+            .buttonStyle(.plain)
+
+            if isCharacterMenuExpanded {
+                let otherChars = Array(project.characters.dropFirst())
+                
+                VStack(spacing: 12) {
+                    ForEach(otherChars) { char in
+                        Button {
+                            selectCharacter(char)
+                        } label: {
+                            CharacterSidebarItem(character: char)
+                                .draggable(char.id) {
+                                    CharacterSidebarItem(character: char)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    plusSidebarButton
+                }
+                .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity.combined(with: .scale(scale: 0.8))))
+            }
+        }
+        .padding(.leading, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .fullScreenCover(isPresented: $isShowingCharacterCreator) {
+            CharacterEditView(character: $newCharacter) {
+                project.characters.append(newCharacter)
+            }
+        }
+    }
+
+    private func selectCharacter(_ character: StoryCharacter) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+            if let index = project.characters.firstIndex(where: { $0.id == character.id }) {
+                let char = project.characters.remove(at: index)
+                project.characters.insert(char, at: 0)
+            }
+            isCharacterMenuExpanded = false
+        }
+    }
+
+    private var plusSidebarButton: some View {
+        Button {
+            let nextNum = project.characters.count + 1
+            newCharacter = StoryCharacter(name: "Character \(nextNum)", avatar: .man)
+            isShowingCharacterCreator = true
+        } label: {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.95))
+                .frame(width: 56, height: 56)
+                .overlay {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .bold))
+                }
+                .shadow(color: .black.opacity(0.12), radius: 3, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var actSelectorDropdown: some View {
+        Menu {
+            ForEach(project.acts) { act in
+                Button {
+                    withAnimation {
+                        project.currentActID = act.id
+                    }
+                } label: {
+                    HStack {
+                        Text(act.name)
+                        if project.currentActID == act.id {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+            
+            Divider()
+            
+            Button {
+                let newActNumber = project.acts.count + 1
+                let newAct = Act(name: "Act \(newActNumber)")
+                project.acts.append(newAct)
+                project.currentActID = newAct.id
+            } label: {
+                Label("Add Act", systemImage: "plus")
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(project.acts.first(where: { $0.id == project.currentActID })?.name ?? "Act 1")
+                    .font(.subheadline.weight(.semibold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemGray4).opacity(0.45))
+            )
+            .foregroundStyle(.black.opacity(0.72))
+        }
     }
 
     private func handleMainDrop(items: [String], at location: CGPoint) -> Bool {
@@ -245,17 +402,19 @@ struct StoryCanvasView: View {
         }
 
         var node = defaultNode(for: type)
+        let actIdx = currentActIndex
         node.position = nearestFreeWorldPosition(
             desired: location,
             itemSize: canvasNodeSize(node),
-            existing: project.canvasNodes
+            existing: project.acts[actIdx].canvasNodes
         )
-        project.canvasNodes.append(node)
+        project.acts[actIdx].canvasNodes.append(node)
         return true
     }
 
     private func collapseChoicesCardsIfNeeded(at point: CGPoint) {
-        let tappedInsideChoicesCard = project.canvasNodes.contains { node in
+        let actIdx = currentActIndex
+        let tappedInsideChoicesCard = project.acts[actIdx].canvasNodes.contains { node in
             guard node.type == .choices else { return false }
             let nodeSize = canvasNodeSize(node)
             let frame = CGRect(
@@ -268,24 +427,26 @@ struct StoryCanvasView: View {
         }
 
         guard !tappedInsideChoicesCard else { return }
-        for index in project.canvasNodes.indices {
-            guard project.canvasNodes[index].type == .choices else { continue }
-            project.canvasNodes[index].choicesData?.isCollapsed = true
+        for index in project.acts[actIdx].canvasNodes.indices {
+            guard project.acts[actIdx].canvasNodes[index].type == .choices else { continue }
+            project.acts[actIdx].canvasNodes[index].choicesData?.isCollapsed = true
         }
     }
     
      private func clearMiniEditModes() {
-         for index in project.canvasNodes.indices {
-             guard project.canvasNodes[index].type == .location else { continue }
-             guard var locationData = project.canvasNodes[index].locationData else { continue }
+         let actIdx = currentActIndex
+         for index in project.acts[actIdx].canvasNodes.indices {
+             guard project.acts[actIdx].canvasNodes[index].type == .location else { continue }
+             guard var locationData = project.acts[actIdx].canvasNodes[index].locationData else { continue }
              locationData.isMiniEditing = false
              locationData.selectedMiniNodeID = nil
-             project.canvasNodes[index].locationData = locationData
+             project.acts[actIdx].canvasNodes[index].locationData = locationData
          }
      }
      
      private func isAnyMiniCanvasInEditMode() -> Bool {
-         return project.canvasNodes.contains { node in
+         let actIdx = currentActIndex
+         return project.acts[actIdx].canvasNodes.contains { node in
              node.type == .location && node.locationData?.isMiniEditing == true
          }
      }
@@ -330,46 +491,48 @@ struct StoryCanvasView: View {
     }
 
     @ViewBuilder
-    private func locationResizeHandle(for node: Binding<CanvasNode>) -> some View {
-        Circle()
-            .fill(Color.blue)
-            .frame(width: 24, height: 24)
-            .overlay {
-                Circle()
-                    .stroke(Color.white, lineWidth: 2)
-            }
-            .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        guard node.wrappedValue.type == .location else { return }
-                        if resizingLocationNodeID != node.wrappedValue.id {
-                            resizingLocationNodeID = node.wrappedValue.id
-                            let startData = node.wrappedValue.locationData ?? .defaultData
-                            resizeStartMiniSize = CGSize(
-                                width: startData.pinnedMiniCanvasWidth,
-                                height: startData.pinnedMiniCanvasHeight
+    private func locationResizeHandle(for node: Binding<CanvasNode>) -> AnyView {
+        AnyView(
+            Circle()
+                .fill(Color.blue)
+                .frame(width: 24, height: 24)
+                .overlay {
+                    Circle()
+                        .stroke(Color.white, lineWidth: 2)
+                }
+                .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard node.wrappedValue.type == .location else { return }
+                            if resizingLocationNodeID != node.wrappedValue.id {
+                                resizingLocationNodeID = node.wrappedValue.id
+                                let startData = node.wrappedValue.locationData ?? .defaultData
+                                resizeStartMiniSize = CGSize(
+                                    width: startData.pinnedMiniCanvasWidth,
+                                    height: startData.pinnedMiniCanvasHeight
+                                )
+                            }
+                            guard var locationData = node.wrappedValue.locationData else { return }
+
+                            let minWidth = minimumMiniCanvasWidth(for: locationData)
+                            let minHeight = minimumMiniCanvasHeight(for: locationData)
+
+                            locationData.pinnedMiniCanvasWidth = max(
+                                minWidth,
+                                resizeStartMiniSize.width + (value.translation.width / zoomScale)
                             )
+                            locationData.pinnedMiniCanvasHeight = max(
+                                minHeight,
+                                resizeStartMiniSize.height + (value.translation.height / zoomScale)
+                            )
+                            node.wrappedValue.locationData = locationData
                         }
-                        guard var locationData = node.wrappedValue.locationData else { return }
-
-                        let minWidth = minimumMiniCanvasWidth(for: locationData)
-                        let minHeight = minimumMiniCanvasHeight(for: locationData)
-
-                        locationData.pinnedMiniCanvasWidth = max(
-                            minWidth,
-                            resizeStartMiniSize.width + (value.translation.width / zoomScale)
-                        )
-                        locationData.pinnedMiniCanvasHeight = max(
-                            minHeight,
-                            resizeStartMiniSize.height + (value.translation.height / zoomScale)
-                        )
-                        node.wrappedValue.locationData = locationData
-                    }
-                    .onEnded { _ in
-                        resizingLocationNodeID = nil
-                    }
-            )
+                        .onEnded { _ in
+                            resizingLocationNodeID = nil
+                        }
+                )
+        )
     }
 
     private func minimumMiniCanvasWidth(for data: LocationCardData) -> CGFloat {
@@ -395,19 +558,20 @@ struct StoryCanvasView: View {
     }
 
      private func moveMainNodeIntoMiniCanvasIfNeeded(nodeID: UUID) -> Bool {
-         guard let movingIndex = project.canvasNodes.firstIndex(where: { $0.id == nodeID }) else {
+         let actIdx = currentActIndex
+         guard let movingIndex = project.acts[actIdx].canvasNodes.firstIndex(where: { $0.id == nodeID }) else {
              return false
          }
 
-         let node = project.canvasNodes[movingIndex]
+         let node = project.acts[actIdx].canvasNodes[movingIndex]
          guard let targetLocationID = findTargetLocationID(forWorldPoint: node.position, excluding: node.id),
-               let targetLocationNode = project.canvasNodes.first(where: { $0.id == targetLocationID }),
+               let targetLocationNode = project.acts[actIdx].canvasNodes.first(where: { $0.id == targetLocationID }),
                let miniFrame = miniCanvasWorldFrame(for: targetLocationNode) else {
              return false
          }
 
          // Find target location index BEFORE removing the node
-         guard let targetLocationIndex = project.canvasNodes.firstIndex(where: { $0.id == targetLocationID }) else {
+         guard let targetLocationIndex = project.acts[actIdx].canvasNodes.firstIndex(where: { $0.id == targetLocationID }) else {
              return false
          }
 
@@ -417,7 +581,7 @@ struct StoryCanvasView: View {
              y: movedNode.position.y - miniFrame.minY
          )
          
-         guard var targetLocationData = project.canvasNodes[targetLocationIndex].locationData else {
+         guard var targetLocationData = project.acts[actIdx].canvasNodes[targetLocationIndex].locationData else {
              return false
          }
 
@@ -437,38 +601,40 @@ struct StoryCanvasView: View {
          targetLocationData.selectedMiniNodeID = nil
          
          // Update the location card with new data
-         project.canvasNodes[targetLocationIndex].locationData = targetLocationData
+         project.acts[actIdx].canvasNodes[targetLocationIndex].locationData = targetLocationData
          
          // Remove the node from main canvas AFTER updating the location card
-         project.canvasNodes.remove(at: movingIndex)
+         project.acts[actIdx].canvasNodes.remove(at: movingIndex)
          
          selectedMainNodeID = nil
          return true
      }
 
     private func moveMiniNodeToMain(from sourceLocationID: UUID, miniNode: CanvasNode, desiredWorldPosition: CGPoint) {
-        guard let sourceLocationIndex = project.canvasNodes.firstIndex(where: { $0.id == sourceLocationID }),
-              var sourceLocationData = project.canvasNodes[sourceLocationIndex].locationData else {
+        let actIdx = currentActIndex
+        guard let sourceLocationIndex = project.acts[actIdx].canvasNodes.firstIndex(where: { $0.id == sourceLocationID }),
+              var sourceLocationData = project.acts[actIdx].canvasNodes[sourceLocationIndex].locationData else {
             return
         }
 
         sourceLocationData.miniNodes.removeAll { $0.id == miniNode.id }
         sourceLocationData.selectedMiniNodeID = nil
         sourceLocationData.isMiniEditing = false
-        project.canvasNodes[sourceLocationIndex].locationData = sourceLocationData
+        project.acts[actIdx].canvasNodes[sourceLocationIndex].locationData = sourceLocationData
 
         var movedNode = miniNode
         movedNode.position = nearestFreeWorldPosition(
             desired: desiredWorldPosition,
             itemSize: canvasNodeSize(movedNode),
-            existing: project.canvasNodes
+            existing: project.acts[actIdx].canvasNodes
         )
-        project.canvasNodes.append(movedNode)
+        project.acts[actIdx].canvasNodes.append(movedNode)
         selectedMainNodeID = movedNode.id
     }
 
     private func findTargetLocationID(forWorldPoint point: CGPoint, excluding nodeID: UUID) -> UUID? {
-        for node in project.canvasNodes.reversed() {
+        let actIdx = currentActIndex
+        for node in project.acts[actIdx].canvasNodes.reversed() {
             guard node.id != nodeID else { continue }
             guard node.type == .location else { continue }
             guard let frame = miniCanvasWorldFrame(for: node) else { continue }
@@ -527,6 +693,7 @@ private struct ToolbarDraggableBox: View {
 
 private struct CanvasNodeView: View {
     @Binding var node: CanvasNode
+    @Binding var project: Project
     let onMoveMiniNodeToMain: (UUID, CanvasNode, CGPoint) -> Void
 
     var body: some View {
@@ -534,6 +701,7 @@ private struct CanvasNodeView: View {
         case .location:
             LocationCanvasCard(
                 node: $node,
+                project: $project,
                 onMoveMiniNodeToMain: onMoveMiniNodeToMain
             )
         case .choices:
@@ -547,17 +715,13 @@ private struct CanvasNodeView: View {
                 set: { node.propData = $0 }
             ))
         case .event:
-            RoundedRectangle(cornerRadius: 10)
-                .fill(node.type.fillColor)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(node.type.borderColor, lineWidth: 2)
-                }
-                .overlay {
-                    Text(node.type.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.black.opacity(0.72))
-                }
+            EventCanvasCard(
+                data: Binding(
+                    get: { node.eventData ?? .defaultData },
+                    set: { node.eventData = $0 }
+                ),
+                project: $project
+            )
         }
     }
 }
@@ -568,7 +732,8 @@ private func defaultNode(for type: CanvasNodeType) -> CanvasNode {
         position: .zero,
         choicesData: type == .choices ? .defaultData : nil,
         locationData: type == .location ? .defaultData : nil,
-        propData: type == .prop ? .defaultData : nil
+        propData: type == .prop ? .defaultData : nil,
+        eventData: type == .event ? .defaultData : nil
     )
 }
 
@@ -591,6 +756,7 @@ private enum LocationCardLayout {
 
 private struct LocationCanvasCard: View {
     @Binding var node: CanvasNode
+    @Binding var project: Project
     let onMoveMiniNodeToMain: (UUID, CanvasNode, CGPoint) -> Void
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var movingMiniNodeID: UUID?
@@ -698,10 +864,11 @@ private struct LocationCanvasCard: View {
     }
     
     private var miniCanvasView: some View {
-        GeometryReader { proxy in
+        let currentMiniSize = miniCanvasSize(for: node.locationData ?? .defaultData)
+        return GeometryReader { proxy in
             ZStack {
                 canvasBackground
-                miniNodesContent(proxy: proxy)
+                miniNodesContent(proxySize: currentMiniSize)
             }
             .onAppear {
                 ensurePinnedCanvasCoversAllNodes()
@@ -723,6 +890,7 @@ private struct LocationCanvasCard: View {
                 }
             }
         }
+        .frame(height: currentMiniSize.height)
         .frame(maxWidth: .infinity)
     }
     
@@ -735,14 +903,14 @@ private struct LocationCanvasCard: View {
             }
     }
     
-    private func miniNodesContent(proxy: GeometryProxy) -> some View {
+    private func miniNodesContent(proxySize: CGSize) -> some View {
         ForEach(data.miniNodes) { $miniNode in
-            miniNodeItemView(miniNode: $miniNode, proxySize: proxy.size)
+            miniNodeItemView(miniNode: $miniNode, proxySize: proxySize)
         }
     }
     
      private func miniNodeItemView(miniNode: Binding<CanvasNode>, proxySize: CGSize) -> some View {
-         CanvasNodeView(node: miniNode, onMoveMiniNodeToMain: onMoveMiniNodeToMain)
+         CanvasNodeView(node: miniNode, project: $project, onMoveMiniNodeToMain: onMoveMiniNodeToMain)
             .frame(
                  width: canvasNodeSize(miniNode.wrappedValue).width,
                  height: canvasNodeSize(miniNode.wrappedValue).height
@@ -941,6 +1109,39 @@ private struct LocationCanvasCard: View {
     }
 
     private func ensurePinnedCanvasCoversAllNodes() {
+        guard let miniNodes = node.locationData?.miniNodes, !miniNodes.isEmpty else { return }
+        
+        var minTop: CGFloat = .infinity
+        var minLeft: CGFloat = .infinity
+        
+        for miniNode in miniNodes {
+            let size = canvasNodeSize(miniNode)
+            minTop = min(minTop, miniNode.position.y - size.height / 2)
+            minLeft = min(minLeft, miniNode.position.x - size.width / 2)
+        }
+        
+        let padding = LocationCardLayout.miniCanvasVerticalPadding
+        var shiftX: CGFloat = 0
+        var shiftY: CGFloat = 0
+        
+        if minTop < padding {
+            shiftY = padding - minTop
+        }
+        if minLeft < padding {
+            shiftX = padding - minLeft
+        }
+        
+        if shiftX > 0 || shiftY > 0 {
+            for i in 0..<(node.locationData?.miniNodes.count ?? 0) {
+                node.locationData?.miniNodes[i].position.x += shiftX
+                node.locationData?.miniNodes[i].position.y += shiftY
+            }
+            node.position.x -= shiftX / 2
+            node.position.y -= shiftY / 2
+            node.locationData?.pinnedMiniCanvasWidth += shiftX
+            node.locationData?.pinnedMiniCanvasHeight += shiftY
+        }
+
         for miniNode in node.locationData?.miniNodes ?? [] {
             adjustPinnedCanvasForNode(at: miniNode.position, size: canvasNodeSize(miniNode))
         }
@@ -1335,6 +1536,7 @@ private struct AutoGrowingTextEditor: View {
     let textFont: Font
     let measureWidth: CGFloat
     let textAlignment: TextAlignment
+    var isReadOnly: Bool = false
     @State private var dynamicHeight: CGFloat = 56
 
     var body: some View {
@@ -1342,6 +1544,7 @@ private struct AutoGrowingTextEditor: View {
             .font(textFont)
             .scrollContentBackground(.hidden)
             .scrollDisabled(true)
+            .disabled(isReadOnly)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .multilineTextAlignment(textAlignment)
@@ -1385,7 +1588,244 @@ private func canvasNodeSize(_ node: CanvasNode) -> CGSize {
     case .prop:
         return propCardSize(node.propData)
     case .event:
-        return CGSize(width: 132, height: 54)
+        return eventCardSize(node.eventData)
+    }
+}
+
+private enum EventCardLayout {
+    static let cardWidth: CGFloat = 430
+    static let outerPadding: CGFloat = 14
+    static let titleBaseHeight: CGFloat = 52
+    static let titleLineIncrement: CGFloat = 22
+    static let titleFont: UIFont = .systemFont(ofSize: 24, weight: .regular)
+    static let titleMeasureWidth: CGFloat = 330
+    
+    static let sectionTitleFont: UIFont = .systemFont(ofSize: 18, weight: .bold)
+    static let characterIconSize: CGFloat = 44
+    
+    static let subEventDescBaseHeight: CGFloat = 50
+    static let subEventDescLineIncrement: CGFloat = 20
+    static let subEventDescFont: UIFont = .systemFont(ofSize: 18, weight: .regular)
+    static let subEventDescMeasureWidth: CGFloat = 340
+}
+
+private func eventCardSize(_ data: EventCardData?) -> CGSize {
+    guard let data else {
+        return CGSize(width: EventCardLayout.cardWidth, height: 300)
+    }
+    
+    let titleLines = AlphaLogic.lineCount(for: data.title, font: EventCardLayout.titleFont, measureWidth: EventCardLayout.titleMeasureWidth)
+    let titleHeight = max(EventCardLayout.titleBaseHeight, AlphaLogic.steppedHeight(base: EventCardLayout.titleBaseHeight, increment: EventCardLayout.titleLineIncrement, lineCount: titleLines))
+    
+    // Involved characters section height
+    let charactersSectionHeight: CGFloat = 30 + (data.involvedCharacterIDs.isEmpty ? 0 : EventCardLayout.characterIconSize + 10)
+    
+    // Sub-events section height
+    let subEventsHeight = data.subEvents.reduce(CGFloat(0)) { total, sub in
+        let descLines = AlphaLogic.lineCount(for: sub.description, font: EventCardLayout.subEventDescFont, measureWidth: EventCardLayout.subEventDescMeasureWidth)
+        let descHeight = max(EventCardLayout.subEventDescBaseHeight, AlphaLogic.steppedHeight(base: EventCardLayout.subEventDescBaseHeight, increment: EventCardLayout.subEventDescLineIncrement, lineCount: descLines))
+        
+        let charIconsHeight: CGFloat = sub.characterIDs.isEmpty ? 0 : EventCardLayout.characterIconSize + 8
+        return total + 30 + descHeight + charIconsHeight + 10 // index text + desc + icons + spacing
+    }
+    
+    let plusButtonHeight: CGFloat = 44 + 10
+    
+    let totalHeight = (EventCardLayout.outerPadding * 2) 
+        + titleHeight 
+        + 16 // spacing
+        + charactersSectionHeight 
+        + 16 // spacing
+        + subEventsHeight 
+        + plusButtonHeight
+        
+    return CGSize(width: EventCardLayout.cardWidth, height: max(300, totalHeight))
+}
+
+struct EventCanvasCard: View {
+    @Binding var data: EventCardData
+    @Binding var project: Project
+    
+    var body: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(Color(.systemGray4))
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 16) {
+                    titleSection
+                    involvedCharactersSection
+                    subEventsSection
+                }
+                .padding(EventCardLayout.outerPadding)
+            }
+    }
+    
+    private var titleSection: some View {
+        AutoGrowingTextEditor(
+            text: $data.title,
+            minimumHeight: EventCardLayout.titleBaseHeight,
+            baseHeight: EventCardLayout.titleBaseHeight,
+            lineIncrement: EventCardLayout.titleLineIncrement,
+            measureFont: EventCardLayout.titleFont,
+            textFont: .system(size: 24, weight: .regular),
+            measureWidth: EventCardLayout.titleMeasureWidth,
+            textAlignment: .center
+        )
+        .background(RoundedRectangle(cornerRadius: 20).fill(Color(.systemGray6)))
+        .overlay {
+            if data.title.isEmpty {
+                Text("Event Title").foregroundStyle(.secondary).allowsHitTesting(false)
+            }
+        }
+    }
+    
+    private var involvedCharactersSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Characters")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(.black.opacity(0.7))
+            
+            HStack(spacing: 8) {
+                if data.involvedCharacterIDs.isEmpty {
+                    Text("No characters involved yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(data.involvedCharacterIDs, id: \.self) { charID in
+                                if let char = project.characters.first(where: { $0.id == charID }) {
+                                    CharacterIconView(character: char, size: EventCardLayout.characterIconSize)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.systemGray5).opacity(0.5)))
+    }
+    
+    private var subEventsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(data.subEvents.enumerated()), id: \.element.id) { index, subEvent in
+                subEventItem(at: index)
+            }
+            
+            addSubeventButton
+        }
+    }
+    
+    @ViewBuilder
+    private func subEventItem(at index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Subevent \(index + 1)")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+            
+            AutoGrowingTextEditor(
+                text: Binding(
+                    get: { data.subEvents[index].description },
+                    set: { data.subEvents[index].description = $0 }
+                ),
+                minimumHeight: EventCardLayout.subEventDescBaseHeight,
+                baseHeight: EventCardLayout.subEventDescBaseHeight,
+                lineIncrement: EventCardLayout.subEventDescLineIncrement,
+                measureFont: EventCardLayout.subEventDescFont,
+                textFont: .system(size: 18),
+                measureWidth: EventCardLayout.subEventDescMeasureWidth,
+                textAlignment: .leading
+            )
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color(.systemGray6)))
+            
+            if !data.subEvents[index].characterIDs.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(data.subEvents[index].characterIDs, id: \.self) { charID in
+                        if let char = project.characters.first(where: { $0.id == charID }) {
+                            CharacterIconView(character: char, size: 34)
+                                .onTapGesture {
+                                    data.subEvents[index].characterIDs.removeAll { $0 == charID }
+                                    updateInvolvedCharacters()
+                                }
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1)))
+        .dropDestination(for: UUID.self) { items, _ in
+            handleCharacterDrop(items: items, subEventIndex: index)
+        }
+    }
+    
+    private var addSubeventButton: some View {
+        Button {
+            data.subEvents.append(SubEvent(description: ""))
+        } label: {
+            HStack {
+                Image(systemName: "plus.circle.fill")
+                Text("Add Subevent")
+            }
+            .font(.subheadline.bold())
+            .foregroundStyle(.blue)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.blue.opacity(0.1)))
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private func handleCharacterDrop(items: [UUID], subEventIndex: Int) -> Bool {
+        guard let charID = items.first else {
+            return false
+        }
+        
+        // Add to subevent if not already there
+        if !data.subEvents[subEventIndex].characterIDs.contains(charID) {
+            data.subEvents[subEventIndex].characterIDs.append(charID)
+            updateInvolvedCharacters()
+            return true
+        }
+        return false
+    }
+    
+    private func updateInvolvedCharacters() {
+        var allIDs = Set<UUID>()
+        for sub in data.subEvents {
+            for id in sub.characterIDs {
+                allIDs.insert(id)
+            }
+        }
+        data.involvedCharacterIDs = Array(allIDs)
+    }
+}
+
+struct CharacterIconView: View {
+    let character: StoryCharacter
+    let size: CGFloat
+    
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(Color.white.opacity(0.95))
+            .frame(width: size, height: size)
+            .overlay {
+                AvatarFigureView(
+                    avatar: character.avatar,
+                    maleHairStyle: character.maleHairStyle,
+                    upperClothStyle: character.upperClothStyle,
+                    skinToneIndex: character.skinToneIndex,
+                    bodyHeight: size * 3.5,
+                    hairSize: size,
+                    hairOffsetY: -size * 1.3
+                )
+                .offset(y: size * 1.1)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
     }
 }
 
@@ -1415,14 +1855,14 @@ private func choicesCardSize(_ data: ChoicesCardData?) -> CGSize {
         font: ChoiceCardLayout.titleFont,
         measureWidth: ChoiceCardLayout.titleMeasureWidth
     )
-    let titleHeight = AlphaLogic.steppedHeight(
+    let titleHeight = max(52, AlphaLogic.steppedHeight(
         base: ChoiceCardLayout.titleBaseHeight,
         increment: ChoiceCardLayout.titleLineIncrement,
         lineCount: titleLineCount
-    )
+    ))
 
     if data.isCollapsed {
-        return CGSize(width: ChoiceCardLayout.cardWidth, height: 24 + 34 + 8 + titleHeight)
+        return CGSize(width: ChoiceCardLayout.cardWidth, height: 12 + 34 + 10 + titleHeight + 12)
     }
 
     let baseHeight: CGFloat = 12 + titleHeight + 10
@@ -1444,7 +1884,7 @@ private func choicesCardSize(_ data: ChoicesCardData?) -> CGSize {
         return partial + rowHeight
     }
 
-    let totalRowSpacing = CGFloat(max(data.options.count - 1, 0)) * rowSpacing
+    let totalRowSpacing = CGFloat(max(data.options.count, 0)) * rowSpacing
     let totalHeight = baseHeight + rowsHeight + totalRowSpacing + plusSectionHeight + bottomPadding
 
     return CGSize(width: ChoiceCardLayout.cardWidth, height: max(200, totalHeight))
@@ -1460,22 +1900,22 @@ private func propCardSize(_ data: PropCardData?) -> CGSize {
         font: PropCardLayout.titleFont,
         measureWidth: PropCardLayout.titleMeasureWidth
     )
-    let titleHeight = AlphaLogic.steppedHeight(
+    let titleHeight = max(PropCardLayout.titleBaseHeight, AlphaLogic.steppedHeight(
         base: PropCardLayout.titleBaseHeight,
         increment: PropCardLayout.titleLineIncrement,
         lineCount: titleLines
-    )
+    ))
 
     let descriptionLines = AlphaLogic.lineCount(
         for: data.description,
         font: PropCardLayout.descriptionFont,
         measureWidth: PropCardLayout.descriptionMeasureWidth
     )
-    let descriptionHeight = AlphaLogic.steppedHeight(
+    let descriptionHeight = max(PropCardLayout.descriptionBaseHeight, AlphaLogic.steppedHeight(
         base: PropCardLayout.descriptionBaseHeight,
         increment: PropCardLayout.descriptionLineIncrement,
         lineCount: descriptionLines
-    )
+    ))
 
     let totalHeight = (PropCardLayout.outerPadding * 2)
         + titleHeight
@@ -1596,6 +2036,7 @@ private func placeNodeWithoutOverlapInMini(
 
 struct CanvasNodeContainer: View {
     @Binding var node: CanvasNode
+    @Binding var project: Project
     let isSelected: Bool
     let zoomScale: CGFloat
     let worldToViewport: (CGPoint) -> CGPoint
@@ -1603,7 +2044,7 @@ struct CanvasNodeContainer: View {
     let onDelete: () -> Void
     
      var body: some View {
-         CanvasNodeView(node: $node, onMoveMiniNodeToMain: onMoveMiniNodeToMain)
+         CanvasNodeView(node: $node, project: $project, onMoveMiniNodeToMain: onMoveMiniNodeToMain)
              .frame(width: canvasNodeSize(node).width, height: canvasNodeSize(node).height)
              .overlay(alignment: .topTrailing) {
                 if isSelected {
@@ -1620,5 +2061,155 @@ struct CanvasNodeContainer: View {
                 .frame(width: 30, height: 30)
                 .overlay { Image(systemName: "minus").font(.system(size: 14, weight: .bold)).foregroundStyle(.white) }
         }
+    }
+}
+
+struct MainCanvasNodeLoop: View {
+    @Binding var project: Project
+    @Binding var selectedMainNodeID: UUID?
+    @Binding var movingMainNodeID: UUID?
+    @Binding var movingMainStartPosition: CGPoint
+    @Binding var resizingLocationNodeID: UUID?
+    
+    let zoomScale: CGFloat
+    let worldToViewport: (CGPoint) -> CGPoint
+    let isAnyMiniCanvasInEditMode: () -> Bool
+    let clearMiniEditModes: () -> Void
+    let moveMiniNodeToMain: (UUID, CanvasNode, CGPoint) -> Void
+    let onDeleteNode: (UUID) -> Void
+    let miniCanvasWorldFrame: (CanvasNode) -> CGRect?
+    let moveMainNodeIntoMiniCanvasIfNeeded: (UUID) -> Bool
+    let nearestFreeWorldPosition: (CGPoint, CGSize, [CanvasNode]) -> CGPoint
+    let locationResizeHandle: (Binding<CanvasNode>) -> AnyView
+
+    private var currentActIndex: Int {
+        project.acts.firstIndex(where: { $0.id == project.currentActID }) ?? 0
+    }
+
+    private var currentActNodes: Binding<[CanvasNode]> {
+        if let index = project.acts.firstIndex(where: { $0.id == project.currentActID }) {
+            return $project.acts[index].canvasNodes
+        } else if !project.acts.isEmpty {
+            return $project.acts[0].canvasNodes
+        } else {
+            return .constant([])
+        }
+    }
+
+    var body: some View {
+        ForEach(currentActNodes) { $node in
+            nodeView(for: $node)
+        }
+    }
+
+    @ViewBuilder
+    private func nodeView(for node: Binding<CanvasNode>) -> some View {
+        CanvasNodeContainer(
+            node: node,
+            project: $project,
+            isSelected: selectedMainNodeID == node.wrappedValue.id,
+            zoomScale: zoomScale,
+            worldToViewport: worldToViewport,
+            onMoveMiniNodeToMain: moveMiniNodeToMain,
+            onDelete: {
+                onDeleteNode(node.wrappedValue.id)
+            }
+        )
+        .overlay(alignment: .bottomTrailing) {
+            if selectedMainNodeID == node.wrappedValue.id, node.wrappedValue.type == .location {
+                locationResizeHandle(node)
+                    .offset(x: -8, y: -8)
+            }
+        }
+        .scaleEffect(zoomScale, anchor: .center)
+        .position(worldToViewport(node.wrappedValue.position))
+        .onLongPressGesture(minimumDuration: 0.35) {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                guard !isAnyMiniCanvasInEditMode() else { return }
+                clearMiniEditModes()
+                selectedMainNodeID = node.wrappedValue.id
+            }
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    handleDragChanged(value: value, node: node)
+                }
+                .onEnded { _ in
+                    handleDragEnded(node: node)
+                }
+        )
+    }
+
+    private func handleDragChanged(value: DragGesture.Value, node: Binding<CanvasNode>) {
+        guard selectedMainNodeID == node.wrappedValue.id else { return }
+        guard resizingLocationNodeID != node.wrappedValue.id else { return }
+        guard !isAnyMiniCanvasInEditMode() else { return }
+        
+        if movingMainNodeID != node.wrappedValue.id {
+            movingMainNodeID = node.wrappedValue.id
+            movingMainStartPosition = node.wrappedValue.position
+        }
+        let newPos = CGPoint(
+            x: movingMainStartPosition.x + (value.translation.width / zoomScale),
+            y: movingMainStartPosition.y + (value.translation.height / zoomScale)
+        )
+        node.wrappedValue.position = newPos
+        
+        let actIdx = currentActIndex
+        for i in project.acts[actIdx].canvasNodes.indices {
+            if project.acts[actIdx].canvasNodes[i].type == .location && project.acts[actIdx].canvasNodes[i].id != node.wrappedValue.id {
+                if let frame = miniCanvasWorldFrame(project.acts[actIdx].canvasNodes[i]) {
+                    project.acts[actIdx].canvasNodes[i].locationData?.isMiniCanvasTargeted = frame.contains(newPos)
+                }
+            }
+        }
+    }
+
+    private func handleDragEnded(node: Binding<CanvasNode>) {
+        guard selectedMainNodeID == node.wrappedValue.id else { return }
+        guard resizingLocationNodeID != node.wrappedValue.id else { return }
+        
+        let actIdx = currentActIndex
+        for i in project.acts[actIdx].canvasNodes.indices {
+            project.acts[actIdx].canvasNodes[i].locationData?.isMiniCanvasTargeted = false
+        }
+
+        if moveMainNodeIntoMiniCanvasIfNeeded(node.wrappedValue.id) {
+            movingMainNodeID = nil
+            return
+        }
+        let others = project.acts[actIdx].canvasNodes.filter { $0.id != node.wrappedValue.id }
+        node.wrappedValue.position = nearestFreeWorldPosition(
+            node.wrappedValue.position,
+            canvasNodeSize(node.wrappedValue),
+            others
+        )
+        movingMainNodeID = nil
+    }
+}
+
+struct CharacterSidebarItem: View {
+    let character: StoryCharacter
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color.white.opacity(0.95))
+            .frame(width: 56, height: 56)
+            .overlay {
+                AvatarFigureView(
+                    avatar: character.avatar,
+                    maleHairStyle: character.maleHairStyle,
+                    upperClothStyle: character.upperClothStyle,
+                    skinToneIndex: character.skinToneIndex,
+                    bodyHeight: 200,
+                    hairSize: 55,
+                    hairOffsetY: -75
+                )
+                .offset(y: 65)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .shadow(color: .black.opacity(0.12), radius: 3, x: 0, y: 2)
     }
 }

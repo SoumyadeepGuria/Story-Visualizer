@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CharacterEditView: View {
     @Binding var character: StoryCharacter
+    var onDone: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @State private var section: EditSection = .body
     @State private var selectedHairToneIndex = 0
@@ -73,10 +74,19 @@ struct CharacterEditView: View {
                     }
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Picker("Gender", selection: $character.avatar) {
+                        Text("Male").tag(AvatarType.man)
+                        Text("Female").tag(AvatarType.woman)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 140)
+
                     Button("Done") {
+                        onDone?()
                         dismiss()
                     }
+                    .fontWeight(.semibold)
                 }
             }
         }

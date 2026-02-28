@@ -1,5 +1,16 @@
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
+
+extension UTType {
+    nonisolated(unsafe) static let storyCharacter = UTType(exportedAs: "com.storyvisualizer.character")
+}
+
+extension UUID: Transferable {
+    public static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .storyCharacter)
+    }
+}
 
 struct Project: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
@@ -7,6 +18,18 @@ struct Project: Identifiable, Codable, Equatable {
     var characters: [StoryCharacter] = [
         StoryCharacter(name: "Character 1", avatar: .woman)
     ]
+    var acts: [Act] = [Act(name: "Act 1")]
+    var currentActID: UUID?
+
+    init(name: String) {
+        self.name = name
+        self.currentActID = acts.first?.id
+    }
+}
+
+struct Act: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var name: String
     var canvasNodes: [CanvasNode] = []
 }
 
@@ -104,6 +127,7 @@ struct CanvasNode: Identifiable, Codable, Equatable {
     var choicesData: ChoicesCardData?
     var locationData: LocationCardData?
     var propData: PropCardData?
+    var eventData: EventCardData?
 }
 
 enum CanvasNodeType: String, Identifiable, CaseIterable, Codable, Equatable {
@@ -113,6 +137,26 @@ enum CanvasNodeType: String, Identifiable, CaseIterable, Codable, Equatable {
     case event
 
     var id: String { rawValue }
+}
+
+struct EventCardData: Codable, Equatable {
+    var title: String
+    var involvedCharacterIDs: [UUID]
+    var subEvents: [SubEvent]
+
+    static var defaultData: EventCardData {
+        EventCardData(
+            title: "",
+            involvedCharacterIDs: [],
+            subEvents: [SubEvent(description: "")]
+        )
+    }
+}
+
+struct SubEvent: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var description: String
+    var characterIDs: [UUID] = []
 }
 
 struct LocationCardData: Codable, Equatable {
