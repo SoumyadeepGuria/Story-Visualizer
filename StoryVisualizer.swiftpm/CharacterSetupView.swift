@@ -45,16 +45,19 @@ struct CharacterSetupView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
 
                 LazyVGrid(columns: characterColumns, spacing: 12) {
-                    ForEach($project.characters) { $character in
-                        CharacterCardView(character: $character) {
-                            editingCharacterID = character.id
-                        } onSwipeUp: {
-                            pendingRemovalCharacter = PendingCharacterRemoval(
-                                id: character.id,
-                                name: character.name
-                            )
-                        }
-                        .frame(height: isPad ? 340 : 290)
+                    ForEach(project.characters.indices, id: \.self) { index in
+                        // Passing the binding to a dedicated child view stops the "Type-check" timeout
+                        GridCharacterItem(
+                            character: $project.characters[index],
+                            isPad: isPad,
+                            onEdit: { editingCharacterID = project.characters[index].id },
+                            onRemove: {
+                                pendingRemovalCharacter = PendingCharacterRemoval(
+                                    id: project.characters[index].id,
+                                    name: project.characters[index].name
+                                )
+                            }
+                        )
                     }
                 }
             }
@@ -119,4 +122,20 @@ struct CharacterSetupView: View {
 private struct PendingCharacterRemoval: Identifiable {
     let id: UUID
     let name: String
+}
+
+struct GridCharacterItem: View {
+    @Binding var character: StoryCharacter
+    let isPad: Bool
+    let onEdit: () -> Void
+    let onRemove: () -> Void
+    
+    var body: some View {
+        CharacterCardView(character: $character) {
+            onEdit()
+        } onSwipeUp: {
+            onRemove()
+        }
+        .frame(height: isPad ? 340 : 290)
+    }
 }

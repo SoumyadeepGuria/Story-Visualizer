@@ -103,6 +103,7 @@ struct CanvasNode: Identifiable, Codable, Equatable {
     var position: CGPoint
     var choicesData: ChoicesCardData?
     var locationData: LocationCardData?
+    var propData: PropCardData?
 }
 
 enum CanvasNodeType: String, Identifiable, CaseIterable, Codable, Equatable {
@@ -119,8 +120,53 @@ struct LocationCardData: Codable, Equatable {
     var backgroundImageData: Data?
     var miniNodes: [CanvasNode]
     var isMiniCanvasTargeted: Bool
+    var isMiniEditing: Bool
+    var selectedMiniNodeID: UUID?
     var pinnedMiniCanvasHeight: CGFloat
     var pinnedMiniCanvasWidth: CGFloat
+    
+    init(
+        title: String,
+        backgroundImageData: Data?,
+        miniNodes: [CanvasNode],
+        isMiniCanvasTargeted: Bool,
+        isMiniEditing: Bool,
+        selectedMiniNodeID: UUID?,
+        pinnedMiniCanvasHeight: CGFloat,
+        pinnedMiniCanvasWidth: CGFloat
+    ) {
+        self.title = title
+        self.backgroundImageData = backgroundImageData
+        self.miniNodes = miniNodes
+        self.isMiniCanvasTargeted = isMiniCanvasTargeted
+        self.isMiniEditing = isMiniEditing
+        self.selectedMiniNodeID = selectedMiniNodeID
+        self.pinnedMiniCanvasHeight = pinnedMiniCanvasHeight
+        self.pinnedMiniCanvasWidth = pinnedMiniCanvasWidth
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case backgroundImageData
+        case miniNodes
+        case isMiniCanvasTargeted
+        case isMiniEditing
+        case selectedMiniNodeID
+        case pinnedMiniCanvasHeight
+        case pinnedMiniCanvasWidth
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        title = try container.decode(String.self, forKey: .title)
+        backgroundImageData = try container.decodeIfPresent(Data.self, forKey: .backgroundImageData)
+        miniNodes = try container.decodeIfPresent([CanvasNode].self, forKey: .miniNodes) ?? []
+        isMiniCanvasTargeted = try container.decodeIfPresent(Bool.self, forKey: .isMiniCanvasTargeted) ?? false
+        isMiniEditing = try container.decodeIfPresent(Bool.self, forKey: .isMiniEditing) ?? false
+        selectedMiniNodeID = try container.decodeIfPresent(UUID.self, forKey: .selectedMiniNodeID)
+        pinnedMiniCanvasHeight = try container.decodeIfPresent(CGFloat.self, forKey: .pinnedMiniCanvasHeight) ?? 250
+        pinnedMiniCanvasWidth = try container.decodeIfPresent(CGFloat.self, forKey: .pinnedMiniCanvasWidth) ?? 410
+    }
 
     static var defaultData: LocationCardData {
         LocationCardData(
@@ -128,6 +174,8 @@ struct LocationCardData: Codable, Equatable {
             backgroundImageData: nil,
             miniNodes: [],
             isMiniCanvasTargeted: false,
+            isMiniEditing: false,
+            selectedMiniNodeID: nil,
             pinnedMiniCanvasHeight: 250,
             pinnedMiniCanvasWidth: 410
         )
@@ -154,6 +202,20 @@ struct ChoiceOption: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var label: String
     var description: String
+}
+
+struct PropCardData: Codable, Equatable {
+    var title: String
+    var imageData: Data?
+    var description: String
+
+    static var defaultData: PropCardData {
+        PropCardData(
+            title: "",
+            imageData: nil,
+            description: ""
+        )
+    }
 }
 
 extension CanvasNodeType {

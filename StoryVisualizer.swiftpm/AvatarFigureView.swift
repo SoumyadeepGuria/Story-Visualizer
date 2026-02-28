@@ -11,7 +11,7 @@ struct AvatarFigureView: View {
 
     static let skinTonePalette: [Color] = [
         Color(red: 0.90, green: 0.80, blue: 0.66),
-        Color(red: 0.84, green: 0.65, blue: 0.49),
+        Color(red: 0.84, green: 0.65, blue: 0.49), 
         Color(red: 0.84, green: 0.74, blue: 0.65),
         Color(red: 0.64, green: 0.39, blue: 0.32),
         Color(red: 0.88, green: 0.65, blue: 0.52),
