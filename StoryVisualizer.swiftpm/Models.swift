@@ -16,7 +16,7 @@ struct Project: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var name: String
     var characters: [StoryCharacter] = [
-        StoryCharacter(name: "Character 1", avatar: .woman)
+        StoryCharacter(name: "Character 1", avatar: .unknown)
     ]
     var acts: [Act] = [Act(name: "Act 1")]
     var currentActID: UUID?
@@ -40,7 +40,51 @@ struct StoryCharacter: Identifiable, Codable, Equatable {
     var maleHairStyle: MaleHairStyle = .style1
     var upperClothStyle: UpperClothStyle = .style1
     var skinToneIndex: Int = 0
-    var assignedColor: ColorData = ColorData(r: 10, g: 28, b: 128)
+    var assignedColor: ColorData
+    var selectedAsset: String?
+    var role: CharacterRole = .protagonist
+    var customImages: [AvatarType: Data] = [:]
+
+    var connectionColor: ColorData { assignedColor }
+
+    init(name: String, avatar: AvatarType = .unknown) {
+        self.name = name
+        self.avatar = avatar
+        self.role = .protagonist
+        self.assignedColor = ColorData.random()
+        self.selectedAsset = nil
+    }
+}
+
+enum CharacterRole: String, CaseIterable, Identifiable, Codable, Equatable {
+    case protagonist = "Protagonist"
+    case antagonist = "Antagonist"
+    case side = "Side Character"
+    
+    var id: String { rawValue }
+    
+    var color: Color {
+        switch self {
+        case .protagonist:
+            return .green
+        case .antagonist:
+            return .red
+        case .side:
+            return .yellow
+        }
+    }
+}
+
+struct CharacterAsset: Identifiable, Codable, Equatable {
+    var id: String { name }
+    let name: String
+    let imageName: String
+}
+
+enum AssetCategory: String, CaseIterable {
+    case animals = "Animals"
+    case birds = "Birds"
+    case fish = "Fish"
 }
 
 struct ColorData: Codable, Equatable {
@@ -50,6 +94,14 @@ struct ColorData: Codable, Equatable {
 
     var color: Color {
         Color(red: r/255, green: g/255, blue: b/255)
+    }
+    
+    static func random() -> ColorData {
+        ColorData(
+            r: Double.random(in: 40...220),
+            g: Double.random(in: 40...220),
+            b: Double.random(in: 40...220)
+        )
     }
 }
 
@@ -100,6 +152,8 @@ enum UpperClothStyle: String, CaseIterable, Identifiable, Codable, Equatable {
 enum AvatarType: String, CaseIterable, Identifiable, Codable, Equatable {
     case man
     case woman
+    case animal
+    case unknown
 
     var id: String { rawValue }
 
@@ -109,6 +163,10 @@ enum AvatarType: String, CaseIterable, Identifiable, Codable, Equatable {
             return "person.fill"
         case .woman:
             return "person.crop.circle.fill"
+        case .animal:
+            return "pawprint.fill"
+        case .unknown:
+            return "questionmark.circle.fill"
         }
     }
 
@@ -116,7 +174,7 @@ enum AvatarType: String, CaseIterable, Identifiable, Codable, Equatable {
         switch self {
         case .man:
             return "Male "
-        case .woman:
+        default:
             return nil
         }
     }
@@ -127,8 +185,17 @@ enum AvatarType: String, CaseIterable, Identifiable, Codable, Equatable {
             return "Male"
         case .woman:
             return "Female"
+        case .animal:
+            return "Animal"
+        case .unknown:
+            return "Unknown"
         }
     }
+}
+
+struct ConnectionData: Codable, Equatable {
+    var targetNodeID: UUID
+    var color: ColorData? // nil means default black
 }
 
 struct CanvasNode: Identifiable, Codable, Equatable {
@@ -139,7 +206,13 @@ struct CanvasNode: Identifiable, Codable, Equatable {
     var locationData: LocationCardData?
     var propData: PropCardData?
     var eventData: EventCardData?
-    var targetNodeIDs: [UUID] = []
+    var connections: [ConnectionData] = []
+    
+    @available(*, deprecated, message: "Use connections instead")
+    var targetNodeIDs: [UUID] {
+        get { connections.map { $0.targetNodeID } }
+        set { connections = newValue.map { ConnectionData(targetNodeID: $0) } }
+    }
 }
 
 enum CanvasNodeType: String, Identifiable, CaseIterable, Codable, Equatable {
@@ -258,7 +331,19 @@ struct ChoiceOption: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var label: String
     var description: String
-    var targetNodeID: UUID? = nil
+    var target: ConnectionData? = nil
+    
+    @available(*, deprecated, message: "Use target instead")
+    var targetNodeID: UUID? {
+        get { target?.targetNodeID }
+        set { 
+            if let id = newValue {
+                target = ConnectionData(targetNodeID: id)
+            } else {
+                target = nil
+            }
+        }
+    }
 }
 
 struct PropCardData: Codable, Equatable {

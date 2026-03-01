@@ -7,24 +7,35 @@ struct CharacterCardView: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 14)
-            .fill(Color(.systemGray5))
+            .fill(character.role.color.opacity(0.5))
+            .animation(.easeInOut, value: character.role)
             .overlay {
                 VStack(spacing: 12) {
-                    TextField("Character Name", text: $character.name)
-                        .autocorrectionDisabled(true)
-                        .textInputAutocapitalization(.words)
-                        .textFieldStyle(.plain)
-                        .font(.headline)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 12)
+                    HStack {
+                        // Spacer to balance the name title
+                        Circle()
+                            .fill(Color.clear)
+                            .frame(width: 20, height: 20)
+                        
+                        TextField("Character Name", text: $character.name)
+                            .autocorrectionDisabled(true)
+                            .textInputAutocapitalization(.words)
+                            .textFieldStyle(.plain)
+                            .font(.headline)
+                            .multilineTextAlignment(.center)
+                        
+                        Circle()
+                            .fill(character.assignedColor.color)
+                            .opacity(1.0)
+                            .frame(width: 16, height: 16)
+                            .shadow(radius: 1)
+                    }
+                    .padding(.top, 12)
 
                     Spacer()
 
                     AvatarFigureView(
-                        avatar: character.avatar,
-                        maleHairStyle: character.maleHairStyle,
-                        upperClothStyle: character.upperClothStyle,
-                        skinToneIndex: character.skinToneIndex,
+                        character: character,
                         bodyHeight: 165,
                         hairSize: 50,
                         hairOffsetY: -63
@@ -36,9 +47,26 @@ struct CharacterCardView: View {
                     Spacer()
 
                     HStack {
-                        Picker("Gender", selection: $character.avatar) {
-                            Text("Male").tag(AvatarType.man)
-                            Text("Female").tag(AvatarType.woman)
+                        Picker("Type", selection: Binding(
+                            get: { character.avatar },
+                            set: { newType in
+                                character.avatar = newType
+                                // Set defaults when section changes
+                                switch newType {
+                                case .man:
+                                    character.selectedAsset = "Male"
+                                case .woman:
+                                    character.selectedAsset = "Female"
+                                case .animal:
+                                    character.selectedAsset = "Dog"
+                                case .unknown:
+                                    character.selectedAsset = nil
+                                }
+                            }
+                        )) {
+                            ForEach(AvatarType.allCases) { type in
+                                Image(systemName: type.systemImageName).tag(type)
+                            }
                         }
                         .pickerStyle(.segmented)
 

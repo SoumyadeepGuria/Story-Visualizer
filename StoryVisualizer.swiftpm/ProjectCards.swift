@@ -68,10 +68,7 @@ private struct CharacterSnippetBox: View {
             .overlay {
                 GeometryReader { proxy in
                     AvatarFigureView(
-                        avatar: character.avatar,
-                        maleHairStyle: character.maleHairStyle,
-                        upperClothStyle: character.upperClothStyle,
-                        skinToneIndex: character.skinToneIndex,
+                        character: character,
                         bodyHeight: proxy.size.height * 1.9,
                         hairSize: proxy.size.height * 0.78,
                         hairOffsetY: -proxy.size.height * 1.02

@@ -105,7 +105,7 @@ struct CharacterSetupView: View {
             let newCharacters = (current..<targetCount).map { index in
                 StoryCharacter(
                     name: "Character \(index + 1)",
-                    avatar: index.isMultiple(of: 2) ? .woman : .man
+                    avatar: .unknown
                 )
             }
             project.characters.append(contentsOf: newCharacters)
