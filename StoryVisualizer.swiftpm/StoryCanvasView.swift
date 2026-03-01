@@ -159,6 +159,7 @@ struct StoryCanvasView: View {
     @State private var isStopSignSelected = true
     @State private var selectedConnectionID: ConnectionID? = nil
     @State private var sourceConnection: ConnectionSource? = nil
+    @State private var inspectedCharacterID: UUID? = nil
 
     private var currentActID: UUID? { project.currentActID }
 
@@ -226,7 +227,8 @@ struct StoryCanvasView: View {
                         moveMainNodeIntoMiniCanvasIfNeeded: moveMainNodeIntoMiniCanvasIfNeeded,
                         nearestFreeWorldPosition: nearestFreeWorldPosition,
                         locationResizeHandle: { node in AnyView(locationResizeHandle(node)) },
-                        isStopSignSelected: isStopSignSelected
+                        isStopSignSelected: isStopSignSelected,
+                        inspectedCharacterID: $inspectedCharacterID
                     )
 
                     VStack {
@@ -299,6 +301,9 @@ struct StoryCanvasView: View {
                                 movingMainNodeID = nil
                                 resizingLocationNodeID = nil
                             }
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                inspectedCharacterID = nil
+                            }
                             selectedConnectionID = nil
                             clearMiniEditModes()
                             collapseChoicesCardsIfNeeded(at: worldPoint)
@@ -332,7 +337,7 @@ struct StoryCanvasView: View {
             }.background(RoundedRectangle(cornerRadius: 12).fill(Color(.systemGray4).opacity(0.45)))
             actSelectorDropdown
         }
-        .allowsHitTesting(!isAnyEditModeActive).disabled(isAnyEditModeActive).opacity(isAnyEditModeActive ? 0.55 : 1)
+        .disabled(isAnyEditModeActive || inspectedCharacterID != nil).opacity((isAnyEditModeActive || inspectedCharacterID != nil) ? 0.55 : 1)
     }
 
     private var characterSideBar: some View {
@@ -367,7 +372,11 @@ struct StoryCanvasView: View {
                         isStopSignSelected = false
                     }
                 } label: {
-                    CharacterSidebarItem(character: firstChar)
+                    CharacterSidebarItem(character: firstChar, isInspected: inspectedCharacterID == firstChar.id, onDoubleTap: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            inspectedCharacterID = (inspectedCharacterID == firstChar.id) ? nil : firstChar.id
+                        }
+                    })
                         .overlay {
                             if !isStopSignSelected {
                                 RoundedRectangle(cornerRadius: 12)
@@ -390,7 +399,11 @@ struct StoryCanvasView: View {
                 VStack(spacing: 12) {
                     ForEach(otherChars) { char in
                         Button { selectCharacter(char) } label: {
-                            CharacterSidebarItem(character: char).draggable(char.id) { CharacterSidebarItem(character: char) }
+                            CharacterSidebarItem(character: char, isInspected: inspectedCharacterID == char.id, onDoubleTap: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    inspectedCharacterID = (inspectedCharacterID == char.id) ? nil : char.id
+                                }
+                            }).draggable(char.id) { CharacterSidebarItem(character: char) }
                         }.buttonStyle(.plain)
                     }
                     plusSidebarButton
@@ -399,11 +412,6 @@ struct StoryCanvasView: View {
         }.padding(.leading, 16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .fullScreenCover(isPresented: $isShowingCharacterCreator) {
             CharacterEditView(character: $newCharacter) {
-                let index = project.characters.count
-                let r = 10.0 + Double(index) * 10.0
-                let g = 28.0 + Double(index) * 10.0
-                let b = 128.0 + Double(index) * 10.0
-                newCharacter.assignedColor = ColorData(r: r, g: g, b: b)
                 project.characters.append(newCharacter)
             }
         }
@@ -424,6 +432,7 @@ struct StoryCanvasView: View {
         Button {
             let nextNum = project.characters.count + 1
             newCharacter = StoryCharacter(name: "Character \(nextNum)", avatar: .man)
+            newCharacter.assignedColor = ColorData.random()
             isShowingCharacterCreator = true
         } label: {
             RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.95)).frame(width: 56, height: 56)
@@ -645,12 +654,13 @@ private struct CanvasNodeView: View {
     @Binding var sourceConnection: ConnectionSource?
     let onMoveMiniNodeToMain: (UUID, CanvasNode, CGPoint) -> Void
     let isStopSignSelected: Bool
+    @Binding var inspectedCharacterID: UUID?
     var body: some View {
         switch node.type {
-        case .location: LocationCanvasCard(node: $node, project: $project, sourceConnection: $sourceConnection, onMoveMiniNodeToMain: onMoveMiniNodeToMain, isStopSignSelected: isStopSignSelected)
-        case .choices: ChoicesCanvasCard(nodeID: node.id, data: Binding(get: { node.choicesData ?? .defaultData }, set: { node.choicesData = $0 }), project: $project, sourceConnection: $sourceConnection)
-        case .prop: PropCanvasCard(data: Binding(get: { node.propData ?? .defaultData }, set: { node.propData = $0 }))
-        case .event: EventCanvasCard(data: Binding(get: { node.eventData ?? .defaultData }, set: { node.eventData = $0 }), project: $project)
+        case .location: LocationCanvasCard(node: $node, project: $project, sourceConnection: $sourceConnection, onMoveMiniNodeToMain: onMoveMiniNodeToMain, isStopSignSelected: isStopSignSelected, inspectedCharacterID: $inspectedCharacterID).disabled(inspectedCharacterID != nil)
+        case .choices: ChoicesCanvasCard(nodeID: node.id, data: Binding(get: { node.choicesData ?? .defaultData }, set: { node.choicesData = $0 }), project: $project, sourceConnection: $sourceConnection).disabled(inspectedCharacterID != nil)
+        case .prop: PropCanvasCard(data: Binding(get: { node.propData ?? .defaultData }, set: { node.propData = $0 })).disabled(inspectedCharacterID != nil)
+        case .event: EventCanvasCard(data: Binding(get: { node.eventData ?? .defaultData }, set: { node.eventData = $0 }), project: $project, inspectedCharacterID: $inspectedCharacterID)
         }
     }
 }
@@ -682,6 +692,7 @@ private struct LocationCanvasCard: View {
     @Binding var sourceConnection: ConnectionSource?
     let onMoveMiniNodeToMain: (UUID, CanvasNode, CGPoint) -> Void
     let isStopSignSelected: Bool
+    @Binding var inspectedCharacterID: UUID?
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var movingMiniNodeID: UUID?
     @State private var movingMiniStartPosition: CGPoint = .zero
@@ -758,11 +769,12 @@ private struct LocationCanvasCard: View {
     private func miniNodeItemView(miniNode: Binding<CanvasNode>, proxySize: CGSize) -> some View {
          CanvasNodeContainer(node: miniNode, project: $project, sourceConnection: $sourceConnection, isSelected: data.wrappedValue.selectedMiniNodeID == miniNode.id, zoomScale: 1.0, worldToViewport: { $0 }, onMoveMiniNodeToMain: onMoveMiniNodeToMain, onDelete: {
              pendingMiniDeletionNodeID = miniNode.id; isShowingMiniDeleteDialog = true
-         }, isStopSignSelected: isStopSignSelected)
+         }, isStopSignSelected: isStopSignSelected, inspectedCharacterID: $inspectedCharacterID)
             .frame(width: canvasNodeSize(miniNode.wrappedValue, project: project).width, height: canvasNodeSize(miniNode.wrappedValue, project: project).height)
             .zIndex(movingMiniNodeID == miniNode.id ? 10 : 0)
             .position(miniNode.wrappedValue.position)
             .onTapGesture {
+                guard inspectedCharacterID == nil else { return }
                 if let src = sourceConnection, src.nodeID != miniNode.id {
                     if let sIdx = data.wrappedValue.miniNodes.firstIndex(where: { $0.id == src.nodeID }) {
                         if let cid = src.choiceID, var d = data.wrappedValue.miniNodes[sIdx].choicesData, let cIdx = d.options.firstIndex(where: { $0.id == cid }) { 
@@ -1104,17 +1116,20 @@ private func eventCardSize(_ data: EventCardData?) -> CGSize {
 
 struct EventCanvasCard: View {
     @Binding var data: EventCardData; @Binding var project: Project
+    @Binding var inspectedCharacterID: UUID?
     var body: some View {
         RoundedRectangle(cornerRadius: 16).fill(Color(.systemGray4))
             .overlay(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 16) {
                     AutoGrowingTextEditor(text: $data.title, minimumHeight: EventCardLayout.titleBaseHeight, baseHeight: EventCardLayout.titleBaseHeight, lineIncrement: EventCardLayout.titleLineIncrement, measureFont: EventCardLayout.titleFont, textFont: .system(size: 24, weight: .regular), measureWidth: EventCardLayout.titleMeasureWidth, textAlignment: .center).background(RoundedRectangle(cornerRadius: 24).fill(Color(.systemGray6)))
                         .overlay(alignment: .center) { if data.title.isEmpty { Text("Name of the event").font(.system(size: 24, weight: .regular)).foregroundStyle(Color.black.opacity(0.65)).allowsHitTesting(false) } }
+                        .disabled(inspectedCharacterID != nil)
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Involved Characters").font(.system(size: 24, weight: .regular)).foregroundStyle(Color.black.opacity(0.9))
-                        ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 10) { ForEach(data.involvedCharacterIDs, id: \.self) { charID in if let char = project.characters.first(where: { $0.id == charID }) { CharacterIconView(character: char, size: 48) } } }.padding(.horizontal, 12).frame(height: 64).frame(minWidth: EventCardLayout.cardWidth - (EventCardLayout.outerPadding * 2), alignment: .leading) }
+                        ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 10) { ForEach(data.involvedCharacterIDs, id: \.self) { charID in if let char = project.characters.first(where: { $0.id == charID }) { CharacterIconView(character: char, size: 48, isInspected: inspectedCharacterID == charID, onDoubleTap: { withAnimation(.easeInOut(duration: 0.2)) { inspectedCharacterID = (inspectedCharacterID == charID) ? nil : charID } }) } } }.padding(.horizontal, 12).frame(height: 64).frame(minWidth: EventCardLayout.cardWidth - (EventCardLayout.outerPadding * 2), alignment: .leading) }
                     }
                     VStack(alignment: .leading, spacing: 10) { ForEach(Array(data.subEvents.enumerated()), id: \.element.id) { index, subEvent in subEventItem(at: index) }; addSubeventButton }
+                        .disabled(inspectedCharacterID != nil)
                 }.padding(EventCardLayout.outerPadding)
             }
     }
@@ -1125,7 +1140,7 @@ struct EventCanvasCard: View {
                 AutoGrowingTextEditor(text: Binding(get: { data.subEvents[index].description }, set: { data.subEvents[index].description = $0 }), minimumHeight: EventCardLayout.subEventDescBaseHeight, baseHeight: EventCardLayout.subEventDescBaseHeight, lineIncrement: EventCardLayout.subEventDescLineIncrement, measureFont: EventCardLayout.subEventDescFont, textFont: .system(size: 22, weight: .regular), measureWidth: EventCardLayout.subEventDescMeasureWidth, textAlignment: .leading).background(RoundedRectangle(cornerRadius: 24).fill(Color(.systemGray6)))
                 VStack(alignment: .leading, spacing: 6) {
                     if data.subEvents[index].characterIDs.isEmpty { HStack { Image(systemName: "person.badge.plus").font(.system(size: 20)); Text("Drop characters here").font(.system(size: 16)) }.foregroundStyle(Color.black.opacity(0.5)).frame(maxWidth: .infinity).frame(height: 56).background(RoundedRectangle(cornerRadius: 24).stroke(Color.black.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))) }
-                    else { HStack(spacing: 8) { ForEach(data.subEvents[index].characterIDs, id: \.self) { charID in if let char = project.characters.first(where: { $0.id == charID }) { CharacterIconView(character: char, size: 40).onTapGesture { data.subEvents[index].characterIDs.removeAll { $0 == charID }; updateInvolvedCharacters() } } }; Button { if !data.subEvents[index].characterIDs.isEmpty { data.subEvents[index].characterIDs.removeLast(); updateInvolvedCharacters() } } label: { Image(systemName: "minus.circle.fill").font(.system(size: 24)).foregroundStyle(.red.opacity(0.8)) }.buttonStyle(.plain) }.padding(.horizontal, 12).frame(height: 56).frame(maxWidth: .infinity, alignment: .leading).background(RoundedRectangle(cornerRadius: 24).fill(Color(.systemGray6))) }
+                    else { HStack(spacing: 8) { ForEach(data.subEvents[index].characterIDs, id: \.self) { charID in if let char = project.characters.first(where: { $0.id == charID }) { CharacterIconView(character: char, size: 40, isInspected: inspectedCharacterID == charID, onDoubleTap: { withAnimation(.easeInOut(duration: 0.2)) { inspectedCharacterID = (inspectedCharacterID == charID) ? nil : charID } }).onTapGesture { guard inspectedCharacterID == nil else { return }; data.subEvents[index].characterIDs.removeAll { $0 == charID }; updateInvolvedCharacters() } } }; Button { if !data.subEvents[index].characterIDs.isEmpty { data.subEvents[index].characterIDs.removeLast(); updateInvolvedCharacters() } } label: { Image(systemName: "minus.circle.fill").font(.system(size: 24)).foregroundStyle(.red.opacity(0.8)) }.buttonStyle(.plain) }.padding(.horizontal, 12).frame(height: 56).frame(maxWidth: .infinity, alignment: .leading).background(RoundedRectangle(cornerRadius: 24).fill(Color(.systemGray6))) }
                 }.contentShape(Rectangle()).dropDestination(for: UUID.self) { items, _ in guard let charID = items.first else { return false }; if !data.subEvents[index].characterIDs.contains(charID) { data.subEvents[index].characterIDs.append(charID); updateInvolvedCharacters(); return true }; return false }
             }
         }
@@ -1188,8 +1203,9 @@ private func placeNodeWithoutOverlapInMini(_ desired: CGPoint, _ itemSize: CGSiz
 
 struct CanvasNodeContainer: View {
     @Binding var node: CanvasNode; @Binding var project: Project; @Binding var sourceConnection: ConnectionSource?; let isSelected: Bool; let zoomScale: CGFloat; let worldToViewport: (CGPoint) -> CGPoint; let onMoveMiniNodeToMain: (UUID, CanvasNode, CGPoint) -> Void; let onDelete: () -> Void; let isStopSignSelected: Bool
+    @Binding var inspectedCharacterID: UUID?
     var body: some View {
-        CanvasNodeView(node: $node, project: $project, sourceConnection: $sourceConnection, onMoveMiniNodeToMain: onMoveMiniNodeToMain, isStopSignSelected: isStopSignSelected)
+        CanvasNodeView(node: $node, project: $project, sourceConnection: $sourceConnection, onMoveMiniNodeToMain: onMoveMiniNodeToMain, isStopSignSelected: isStopSignSelected, inspectedCharacterID: $inspectedCharacterID)
             .frame(width: canvasNodeSize(node, project: project).width, height: canvasNodeSize(node, project: project).height)
             .overlay(alignment: .topTrailing) { if isSelected { Button(action: onDelete) { Circle().fill(Color.red).frame(width: 30, height: 30).overlay { Image(systemName: "minus").font(.system(size: 14, weight: .bold)).foregroundStyle(.white) } }.offset(x: 12, y: -12) } }
             .overlay { if node.type != .choices { let side = bestExitSide(); let size = canvasNodeSize(node, project: project); pathMakingButton(side: side).offset(x: side == .left ? -size.width/2 - 25 : (side == .right ? size.width/2 + 25 : 0), y: side == .top ? -size.height/2 - 25 : (side == .bottom ? size.height/2 + 25 : 0)) } }
@@ -1210,8 +1226,9 @@ struct CanvasNodeContainer: View {
 
 struct MainCanvasNodeLoop: View {
     @Binding var project: Project; @Binding var selectedMainNodeID: UUID?; @Binding var sourceConnection: ConnectionSource?; @Binding var selectedConnectionID: ConnectionID?; @Binding var movingMainNodeID: UUID?; @Binding var movingMainStartPosition: CGPoint; @Binding var resizingLocationNodeID: UUID?; let zoomScale: CGFloat; let worldToViewport: (CGPoint) -> CGPoint; let isAnyMiniCanvasInEditMode: () -> Bool; let clearMiniEditModes: () -> Void; let moveMiniNodeToMain: (UUID, CanvasNode, CGPoint) -> Void; let onDeleteNode: (UUID) -> Void; let miniCanvasWorldFrame: (CanvasNode) -> CGRect?; let moveMainNodeIntoMiniCanvasIfNeeded: (UUID) -> Bool; let nearestFreeWorldPosition: (CGPoint, CGSize, [CanvasNode]) -> CGPoint; let locationResizeHandle: (Binding<CanvasNode>) -> AnyView; let isStopSignSelected: Bool
+    @Binding var inspectedCharacterID: UUID?
     private var currentActIndex: Int { project.acts.firstIndex(where: { $0.id == project.currentActID }) ?? 0 }
-    
+
     private var currentConnectionColor: ColorData? {
         if isStopSignSelected { return nil }
         return project.characters.first?.connectionColor
@@ -1231,6 +1248,7 @@ struct MainCanvasNodeLoop: View {
             ForEach(currentActNodes) { $node in nodeView(for: $node) }
         }
     }
+
     @ViewBuilder private func renderConnection(fromNode: CanvasNode, fromChoice: ChoiceOption?, toNode: CanvasNode) -> some View {
         let sourceRect = rectCentered(at: fromNode.position, size: canvasNodeSize(fromNode, project: project))
         let targetRect = rectCentered(at: toNode.position, size: canvasNodeSize(toNode, project: project))
@@ -1238,11 +1256,14 @@ struct MainCanvasNodeLoop: View {
         let fromPoint = worldToViewport(connectionInfo.from); let toPoint = worldToViewport(connectionInfo.to)
         let obstacles = project.acts[currentActIndex].canvasNodes.filter { $0.id != toNode.id }.map { rectCentered(at: $0.position, size: canvasNodeSize($0, project: project)).insetBy(dx: -5, dy: -5) }
         let connectionID = ConnectionID(sourceID: fromNode.id, choiceID: fromChoice?.id, targetID: toNode.id)
-        
+
         let connectionData = fromChoice != nil ? fromChoice?.target : fromNode.connections.first(where: { $0.targetNodeID == toNode.id })
         let pathColor = connectionData?.color?.color ?? .black.opacity(0.6)
-        
-        ConnectionLineView(
+
+        let isHighlighted = inspectedCharacterID != nil && connectionData?.color?.color == project.characters.first(where: { $0.id == inspectedCharacterID })?.assignedColor.color
+        let opacity = inspectedCharacterID == nil ? 1.0 : (isHighlighted ? 1.0 : 0.2)
+
+        return ConnectionLineView(
             from: fromPoint,
             to: toPoint,
             fromSide: connectionInfo.fromSide,
@@ -1264,6 +1285,7 @@ struct MainCanvasNodeLoop: View {
             },
             color: pathColor
         )
+        .opacity(opacity)
     }
     private func bestConnectionPoints(from: CGRect, to: CGRect, fromChoice: ChoiceOption?, fromNode: CanvasNode) -> (from: CGPoint, to: CGPoint, fromSide: ConnectionSide, toSide: ConnectionSide) {
         let fromPoint: CGPoint
@@ -1312,10 +1334,15 @@ struct MainCanvasNodeLoop: View {
         }
     }
     @ViewBuilder private func nodeView(for node: Binding<CanvasNode>) -> some View {
-        CanvasNodeContainer(node: node, project: $project, sourceConnection: $sourceConnection, isSelected: selectedMainNodeID == node.wrappedValue.id, zoomScale: zoomScale, worldToViewport: worldToViewport, onMoveMiniNodeToMain: moveMiniNodeToMain, onDelete: { onDeleteNode(node.wrappedValue.id) }, isStopSignSelected: isStopSignSelected)
+        let isHighlighted = shouldHighlightNode(node.wrappedValue)
+        let opacity = (inspectedCharacterID == nil || isHighlighted) ? 1.0 : 0.2
+        
+        CanvasNodeContainer(node: node, project: $project, sourceConnection: $sourceConnection, isSelected: selectedMainNodeID == node.wrappedValue.id, zoomScale: zoomScale, worldToViewport: worldToViewport, onMoveMiniNodeToMain: moveMiniNodeToMain, onDelete: { onDeleteNode(node.wrappedValue.id) }, isStopSignSelected: isStopSignSelected, inspectedCharacterID: $inspectedCharacterID)
             .overlay(alignment: .bottomTrailing) { if selectedMainNodeID == node.wrappedValue.id, node.wrappedValue.type == .location { locationResizeHandle(node).offset(x: -8, y: -8) } }
             .scaleEffect(zoomScale, anchor: .center).position(worldToViewport(node.wrappedValue.position))
+            .opacity(opacity)
             .onTapGesture {
+                guard inspectedCharacterID == nil else { return }
                 if let src = sourceConnection, src.nodeID != node.wrappedValue.id {
                     let idx = currentActIndex; if let sIdx = project.acts[idx].canvasNodes.firstIndex(where: { $0.id == src.nodeID }) {
                         if let cid = src.choiceID, var d = project.acts[idx].canvasNodes[sIdx].choicesData, let cIdx = d.options.firstIndex(where: { $0.id == cid }) { 
@@ -1328,8 +1355,20 @@ struct MainCanvasNodeLoop: View {
                     }
                 }
             }
-            .onLongPressGesture(minimumDuration: 0.35) { withAnimation(.easeInOut(duration: 0.15)) { guard !isAnyMiniCanvasInEditMode() else { return }; clearMiniEditModes(); selectedMainNodeID = node.wrappedValue.id } }
-            .simultaneousGesture(DragGesture(minimumDistance: 1).onChanged { value in handleDragChanged(value: value, node: node) }.onEnded { _ in handleDragEnded(node: node) })
+            .onLongPressGesture(minimumDuration: 0.35) { withAnimation(.easeInOut(duration: 0.15)) { guard inspectedCharacterID == nil, !isAnyMiniCanvasInEditMode() else { return }; clearMiniEditModes(); selectedMainNodeID = node.wrappedValue.id } }
+            .simultaneousGesture(DragGesture(minimumDistance: 1).onChanged { value in guard inspectedCharacterID == nil else { return }; handleDragChanged(value: value, node: node) }.onEnded { _ in guard inspectedCharacterID == nil else { return }; handleDragEnded(node: node) })
+    }
+    private func shouldHighlightNode(_ node: CanvasNode) -> Bool {
+        guard let charID = inspectedCharacterID else { return true }
+        if node.type == .event, let eventData = node.eventData { if eventData.involvedCharacterIDs.contains(charID) { return true } }
+        let actIdx = currentActIndex; let nodes = project.acts[actIdx].canvasNodes
+        for otherNode in nodes {
+            for conn in otherNode.connections { if conn.targetNodeID == node.id { if let char = project.characters.first(where: { $0.id == charID }), conn.color?.color == char.assignedColor.color { return true } } }
+            if let choicesData = otherNode.choicesData { for option in choicesData.options { if let target = option.target, target.targetNodeID == node.id { if let char = project.characters.first(where: { $0.id == charID }), target.color?.color == char.assignedColor.color { return true } } } }
+        }
+        for conn in node.connections { if let char = project.characters.first(where: { $0.id == charID }), conn.color?.color == char.assignedColor.color { return true } }
+        if let choicesData = node.choicesData { for option in choicesData.options { if let target = option.target { if let char = project.characters.first(where: { $0.id == charID }), target.color?.color == char.assignedColor.color { return true } } } }
+        return false
     }
     private func handleDragChanged(value: DragGesture.Value, node: Binding<CanvasNode>) {
         guard selectedMainNodeID == node.wrappedValue.id, resizingLocationNodeID != node.wrappedValue.id, !isAnyMiniCanvasInEditMode() else { return }
