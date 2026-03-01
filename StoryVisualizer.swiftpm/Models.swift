@@ -37,9 +37,20 @@ struct StoryCharacter: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var name: String
     var avatar: AvatarType
-    var maleHairStyle: MaleHairStyle = .none
+    var maleHairStyle: MaleHairStyle = .style1
     var upperClothStyle: UpperClothStyle = .style1
     var skinToneIndex: Int = 0
+    var assignedColor: ColorData = ColorData(r: 10, g: 28, b: 128)
+}
+
+struct ColorData: Codable, Equatable {
+    var r: Double
+    var g: Double
+    var b: Double
+
+    var color: Color {
+        Color(red: r/255, green: g/255, blue: b/255)
+    }
 }
 
 enum MaleHairStyle: String, CaseIterable, Identifiable, Codable, Equatable {
@@ -128,6 +139,7 @@ struct CanvasNode: Identifiable, Codable, Equatable {
     var locationData: LocationCardData?
     var propData: PropCardData?
     var eventData: EventCardData?
+    var targetNodeIDs: [UUID] = []
 }
 
 enum CanvasNodeType: String, Identifiable, CaseIterable, Codable, Equatable {
@@ -246,6 +258,7 @@ struct ChoiceOption: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var label: String
     var description: String
+    var targetNodeID: UUID? = nil
 }
 
 struct PropCardData: Codable, Equatable {
