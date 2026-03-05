@@ -1,6 +1,7 @@
 {
   "images" : [
     {
+      "filename" : "Tiger.png",
       "idiom" : "universal",
       "scale" : "1x"
     },

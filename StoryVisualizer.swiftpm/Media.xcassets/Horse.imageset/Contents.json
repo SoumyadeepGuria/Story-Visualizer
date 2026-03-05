@@ -1,6 +1,7 @@
 {
   "images" : [
     {
+      "filename" : "Horse.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
